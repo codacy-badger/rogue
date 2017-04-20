@@ -263,7 +263,9 @@ void ru::Prbs::genFrame (uint32_t size) {
 
    // Generate payload
    while ( cnt < size ) {
-      value = flfsr(value);
+      for (uint32_t i=0; i<width_; i++) {
+         value = flfsr(value);
+      }
       cnt += writeSingle(fr,cnt,value);
    }
 
@@ -329,7 +331,9 @@ void ru::Prbs::acceptFrame ( ris::FramePtr frame ) {
 
    // Check payload
    while ( cnt < size ) {
-      expValue = flfsr(expValue);
+      for (uint32_t i=0; i<width_; i++) {
+         expValue = flfsr(expValue);
+      }
 
       cnt += readSingle(frame,cnt,&gotValue);
 
