@@ -86,9 +86,10 @@ class Device(pr.Node,rim.Hub):
                  offset=0,
                  size=0,
                  hidden=False,
-                 variables=None,
                  expand=True,
-                 enabled=True):
+                 enabled=True,
+                 constVars={},
+    ):
         
         """Initialize device class"""
         if name is None:
@@ -122,14 +123,6 @@ class Device(pr.Node,rim.Hub):
         # Variable interface to enable flag
         self.add(EnableVariable(enabled=enabled))
 
-        if variables is not None and isinstance(variables, collections.Iterable):
-            if all(isinstance(v, pr.BaseVariable) for v in variables):
-                # add the list of Variable objects
-                self.add(variables)
-            elif all(isinstance(v, dict) for v in variables):
-                # create Variable objects from a dict list
-                self.add(pr.Variable(**v) for v in variables)
-
         cmds = sorted((d for d in (getattr(self, c) for c in dir(self)) if hasattr(d, 'PyrogueCommandArgs')),
                       key=lambda x: x.PyrogueCommandOrder)
         for cmd in cmds:
@@ -137,6 +130,11 @@ class Device(pr.Node,rim.Hub):
             if 'name' not in args:
                 args['name'] = cmd.__name__
             self.add(pr.LocalCommand(function=cmd, **args))
+
+        self._constVars = constVars
+
+
+        
 
     @Pyro4.expose
     @property
@@ -369,18 +367,27 @@ class Device(pr.Node,rim.Hub):
                 self._log.debug("Adding new block {} at offset {:#02x}".format(n.name,n.offset))
                 self._blocks.append(pr.RemoteBlock(variable=n))
 
+    def _setConstVars(self):
+        for varName, constVal in self.constVars.items():
+            var = self.variables[varName]
+            var.hidden = True
+            var._defualt = constVal
+            var.mode = 'CONST'                
+
     def _rootAttached(self, parent, root):
         pr.Node._rootAttached(self, parent, root)
 
         self._maxTxnSize = self._reqMaxAccess()
-        self._minTxnSize = self._reqMinAccess()        
+        self._minTxnSize = self._reqMinAccess()
+
+        self._setConstVars()
 
         for key,value in self._nodes.items():
             value._rootAttached(self,root)
 
         self._buildBlocks()
 
-        # Some variable initialization can run until the blocks are built
+        # Some variable initialization can't run until the blocks are built
         for v in self.variables.values():
             v._finishInit()
 
