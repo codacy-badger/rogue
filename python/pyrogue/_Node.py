@@ -174,45 +174,6 @@ class Node(object):
 
     @Pyro4.expose
     @property
-    def variables(self):
-        """
-        Return an OrderedDict of the variables but not commands (which are a subclass of Variable
-        """
-        return odict([(k,n) for k,n in self._nodes.items()
-                      if isinstance(n, pr.BaseVariable) and not isinstance(n, pr.BaseCommand)])
-
-    @Pyro4.expose
-    @property
-    def variableList(self):
-        """
-        Get a recursive list of variables and commands.
-        """
-        lst = []
-        for key,value in self._nodes.items():
-            if isinstance(value,pr.BaseVariable):
-                lst.append(value)
-            else:
-                lst.extend(value.variableList)
-        return lst
-
-    @Pyro4.expose
-    @property
-    def commands(self):
-        """
-        Return an OrderedDict of the Commands that are children of this Node
-        """
-        return odict([(k,n) for k,n in self._nodes.items() if isinstance(n, pr.BaseCommand)])
-
-    @Pyro4.expose
-    @property
-    def devices(self):
-        """
-        Return an OrderedDict of the Devices that are children of this Node
-        """
-        return odict([(k,n) for k,n in self._nodes.items() if isinstance(n, typ)])
-
-    @Pyro4.expose
-    @property
     def parent(self):
         """
         Return parent node or NULL if no parent exists.
@@ -236,15 +197,6 @@ class Node(object):
     def isDevice(self):
         return isinstance(self,pr.Device)
 
-    @Pyro4.expose
-    @property
-    def isVariable(self):
-        return (isinstance(self,pr.BaseVariable) and (not isinstance(self,pr.BaseCommand)))
-
-    @Pyro4.expose
-    @property
-    def isCommand(self):
-        return isinstance(self,pr.BaseCommand)
 
     def find(self, *, recurse=True, typ=None, **kwargs):
         """ 
