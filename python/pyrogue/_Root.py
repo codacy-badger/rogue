@@ -95,6 +95,78 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
         self.add(pr.LocalVariable(name='ForceWrite', value=False, mode='RW', hidden=True,
             description='Configuration Flag To Control Write All Block'))
 
+        # Root Commands
+        @self.command(value='', description='Write configuration to passed filename in YAML format')
+        def WriteConfig(self, arg):
+            """Write YAML configuration to a file. Called from command"""
+            try:
+                with open(arg,'w') as f:
+                    f.write(self.getYaml(True, modes=['RW']))
+            except Exception as e:
+                self._log.exception(e)
+
+        @self.command(value='', description='Read configuration from passed filename in YAML format')
+        def ReadConfig(self, arg):
+            """Read YAML configuration from a file. Called from command"""
+            try:
+                with open(arg,'r') as f:
+                    self.setYaml(f.read(), False, ['RW'])
+            except Exception as e:
+                self._log.exception(e)
+
+        @self.command(description='Generate a hard reset to each device in the tree')
+        def HardReset(self):
+            """Generate a hard reset on all devices"""
+            self.softReset()
+            self.ClearLog(dev,cmd)
+
+        @self.command(description='Generate a soft reset to each device in the tree')
+        def SoftReset(self):
+            """Generate a soft reset on all devices"""
+            self.softReset()
+
+        @self.command(description='Generate a count reset to each device in the tree')
+        def CountReset(self):
+            """Generate a count reset on all devices"""
+            self.countReset()
+
+        @self.command(description='Clear the message log cntained in the SystemLog variable')
+        def ClearLog(self):
+            """Clear the system log"""
+            with self._sysLogLock:
+                self.SystemLog.set(value='',write=False)
+            self.SystemLog.updated()
+                
+        
+        @self.command(description='Read all values from the hardware')
+        def ReadAll(self):
+            """Read all blocks"""
+            self._log.info("Start root read")
+            self._initUpdatedVars()
+            try:
+                self.read(recurse=True)
+                self._log.info("Check root read")
+                self.waitDone(recurse=True)
+            except Exception as e:
+                self._log.exception(e)
+            self._doneUpdatedVars()
+            self._log.info("Done root read")
+
+        @self.command(order=7, description='Write all values to the hardware')
+        def WriteAll(self):
+            """Write all blocks"""
+            self._log.info("Start root write")
+            try:
+                self.write(force=self.ForceWrite.value(), recurse=True)
+                self._log.info("Verify root read")
+                self.verify(recurse=True)
+                self._log.info("Check root read")
+                self.waitDone(recurse=True)
+            except Exception as e:
+                self._log.exception(e)
+                self._log.info("Done root write")
+
+
     def start(self, initRead=False, initWrite=False, pollEn=True, pyroGroup=None, pyroHost=None, pyroNs=None):
         """Setup the tree. Start the polling thread."""
 
@@ -340,74 +412,7 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
                 self._updatedDict = None
                 self._updatedList = None
 
-    @pr.command(order=7, name='WriteAll', description='Write all values to the hardware')
-    def _write(self):
-        """Write all blocks"""
-        self._log.info("Start root write")
-        try:
-            self.writeBlocks(force=self.ForceWrite.value(), recurse=True)
-            self._log.info("Verify root read")
-            self.verifyBlocks(recurse=True)
-            self._log.info("Check root read")
-            self.checkBlocks(recurse=True)
-        except Exception as e:
-            self._log.exception(e)
-        self._log.info("Done root write")
 
-    @pr.command(order=6, name="ReadAll", description='Read all values from the hardware')
-    def _read(self):
-        """Read all blocks"""
-        self._log.info("Start root read")
-        self._initUpdatedVars()
-        try:
-            self.readBlocks(recurse=True)
-            self._log.info("Check root read")
-            self.checkBlocks(recurse=True)
-        except Exception as e:
-            self._log.exception(e)
-        self._doneUpdatedVars()
-        self._log.info("Done root read")
-
-    @pr.command(order=0, name='WriteConfig', value='', description='Write configuration to passed filename in YAML format')
-    def _writeConfig(self,arg):
-        """Write YAML configuration to a file. Called from command"""
-        try:
-            with open(arg,'w') as f:
-                f.write(self.getYaml(True,modes=['RW']))
-        except Exception as e:
-            self._log.exception(e)
-
-    @pr.command(order=1, name='ReadConfig', value='', description='Read configuration from passed filename in YAML format')
-    def _readConfig(self,arg):
-        """Read YAML configuration from a file. Called from command"""
-        try:
-            with open(arg,'r') as f:
-                self.setYaml(f.read(),False,['RW'])
-        except Exception as e:
-            self._log.exception(e)
-
-    @pr.command(order=3, name='SoftReset', description='Generate a soft reset to each device in the tree')
-    def _softReset(self):
-        """Generate a soft reset on all devices"""
-        self.callRecursive('softReset', nodeTypes=[pr.Device])
-
-    @pr.command(order=2, name='HardReset', description='Generate a hard reset to each device in the tree')
-    def _hardReset(self):
-        """Generate a hard reset on all devices"""
-        self.callRecursive('hardReset', nodeTypes=[pr.Device])        
-        self._clearLog(dev,cmd)
-
-    @pr.command(order=4, name='CountReset', description='Generate a count reset to each device in the tree')
-    def _countReset(self):
-        """Generate a count reset on all devices"""
-        self.callRecursive('countReset', nodeTypes=[pr.Device])        
-
-    @pr.command(order=5, name='ClearLog', description='Clear the message log cntained in the SystemLog variable')
-    def _clearLog(self):
-        """Clear the system log"""
-        with self._sysLogLock:
-            self.SystemLog.set(value='',write=False)
-        self.SystemLog.updated()
 
     def _varUpdated(self,var,value,disp):
         entry = {'path':var.path,'value':value,'disp':disp}

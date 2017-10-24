@@ -202,92 +202,87 @@ class Device(pr.Node,rim.Hub):
                 self.variables[v]._hidden = hidden
 
     def softReset(self):
-        pass
+        for device in self.devices.values():
+            device.softReset()
 
     def hardReset(self):
-        pass
+        for device in self.devices.values():
+            device.hardReset()
 
     def countReset(self):
-        pass
+        for device in self.devices.values():
+            device.hardReset()
+
 
     def enableChanged(self,value):
         if value is True:
             self.writeAndVerifyBlocks(force=True, recurse=True, variable=None)
 
-    def writeBlocks(self, force=False, recurse=True, variable=None):
+    def _transactionHelper(self, txnType, force=False, recurse=True, variables=None):
+
+        #If variables are specified, operate on only those
+        if variables is not None:
+            blocks = set(v._block for v in variables)
+            for block in blocks:
+                if force or block.stale:
+                    block.backgroundTransaction(txnType)
+
+        # If no variables specified, do all the variables in the device
+        else:
+            for block in self._blocks:
+                if force or block.stale:
+                    if block._bulkEn:
+                        block.backgroundTransaction(txnType)
+            if recurse:
+                for device in self.devices.values():
+                    device._transactionHelper(txnType, force, recurse)
+
+    def write(self, force=False, recurse=True, variable=None, variables=None):
         """
         Write all of the blocks held by this Device to memory
         """
         self._log.debug(f'Calling {self.path}._writeBlocks')
 
-        # Process local blocks.
-        if variable is not None:
-            variable._block.backgroundTransaction(rim.Write)
-        else:
-            for block in self._blocks:
-                if force or block.stale:
-                    if block.bulkEn:
-                        block.backgroundTransaction(rim.Write)
+        self._transactionHelper(rim.Write, force, recurse, variables)
 
-            if recurse:
-                for key,value in self.devices.items():
-                    value.writeBlocks(force=force, recurse=True)
-
-    def verifyBlocks(self, recurse=True, variable=None):
+    def verify(self, recurse=True, variables=None):
         """
         Perform background verify
         """
 
-        # Process local blocks.
-        if variable is not None:
-            variable._block.backgroundTransaction(rim.Verify)
-        else:
-            for block in self._blocks:
-                if block.bulkEn:
-                    block.backgroundTransaction(rim.Verify)
+        self._transactionHelper(rim.Verify, False, recurse, variables)
 
-            if recurse:
-                for key,value in self.devices.items():
-                    value.verifyBlocks(recurse=True)
-
-    def readBlocks(self, recurse=True, variable=None):
+    def read(self, recurse=True, variables=None):
         """
         Perform background reads
         """
         self._log.debug(f'Calling {self.path}._readBlocks')
 
-        # Process local blocks. 
-        if variable is not None:
-            variable._block.backgroundTransaction(rim.Read)
-        else:
-            for block in self._blocks:
-                if block.bulkEn:
-                    block.backgroundTransaction(rim.Read)
+        self._transactionHelper(rim.Read, False, recurse, variables)
 
-            if recurse:
-                for key,value in self.devices.items():
-                    value.readBlocks(recurse=True)
 
-    def checkBlocks(self, recurse=True, variable=None):
+    def waitDone(self, recurse=True, variables=None):
         """Check errors in all blocks and generate variable update nofifications"""
         self._log.debug(f'Calling {self.path}._checkBlocks')
 
         # Process local blocks
-        if variable is not None:
-            variable._block._checkTransaction()
+        if variables is not None:
+            blocks = set(v._block for v in variables)
+            for block in blocks:
+                block._checkTransaction()
         else:
             for block in self._blocks:
                 block._checkTransaction()
 
             if recurse:
-                for key,value in self.devices.items():
-                        value.checkBlocks(recurse=True)
+                for value in self.devices.values():
+                    value.waitDone(recurse=True)
 
-    def writeAndVerifyBlocks(self, force=False, recurse=True, variable=None):
-        """Perform a write, verify and check. Usefull for committing any stale variables"""
-        self.writeBlocks(force=force, recurse=recurse, variable=variable)
-        self.verifyBlocks(recurse=recurse, variable=variable)
-        self.checkBlocks(recurse=recurse, variable=variable)
+    def commit(self, force=False, recurse=True, variables=None):
+        """Perform a write, verify and waitDone. Usefull for committing any stale variables"""
+        self.write(force=force, recurse=recurse, variable=variable)
+        self.verify(recurse=recurse, variable=variable)
+        self.waitDone(recurse=recurse, variable=variable)
 
     def _rawTxnChunker(self, offset, data, base=pr.UInt, stride=4, wordBitSize=32, txnType=rim.Write, numWords=1):
         if wordBitSize > stride*8:

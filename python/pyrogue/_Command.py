@@ -59,6 +59,10 @@ class BaseCommand(pr.BaseVariable):
         except:
             self._arg = False
 
+    def add(self, **kwargs):
+        raise CommandError('Commands are leaf nodes only and cannot have children')
+
+
     @Pyro4.expose
     @property
     def arg(self):

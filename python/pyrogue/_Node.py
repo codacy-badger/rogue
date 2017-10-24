@@ -124,7 +124,7 @@ class Node(object):
     def __dir__(self):
         return(super().__dir__() + [k for k,v in self._nodes.items()])
 
-    def add(self,node):
+    def add(self, node):
         """Add node as sub-node"""
 
         # Special case if list (or iterable of nodes) is passed
@@ -132,11 +132,6 @@ class Node(object):
             for n in node:
                 self.add(n)
             return
-
-        # Fail if added to a non device node (may change in future)
-        if not isinstance(self,pr.Device):
-            raise NodeError('Attempting to add node with name %s to non device node %s.' % 
-                             (node.name,self.name))
 
         # Fail if root already exists
         if self._root is not None:
@@ -155,8 +150,6 @@ class Node(object):
 
         self._nodes[node.name] = node 
 
-    def addNode(self, nodeClass, **kwargs):
-        self.add(nodeClass(**kwargs))
 
     def addNodes(self, nodeClass, number, stride, **kwargs):
         name = kwargs.pop('name')
@@ -208,7 +201,7 @@ class Node(object):
         """
         Return an OrderedDict of the Commands that are children of this Node
         """
-        return self._getNodes(pr.BaseCommand)
+        return odict([(k,n) for k,n in self._nodes.items() if isinstance(n, pr.BaseCommand)])
 
     @Pyro4.expose
     @property
@@ -216,7 +209,7 @@ class Node(object):
         """
         Return an OrderedDict of the Devices that are children of this Node
         """
-        return self._getNodes(pr.Device)
+        return odict([(k,n) for k,n in self._nodes.items() if isinstance(n, typ)])
 
     @Pyro4.expose
     @property
