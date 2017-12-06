@@ -3,8 +3,32 @@ import rogue.interfaces.memory as rim
 import threading
 from collections import OrderedDict as odict
 
+class MemoryVariable(object):
+    def __init__(self, memdev, offset):
+        self._memdev = memdev
+        self._value = 0
+        self.offset = offset        
+
+    def set(self, value, write=True):
+        with self._memdev._memLock:
+            self._value = value
+            self._memdev.writeBlocks(force=False, recurse=False, variable=self)
+            self._memdev.verifyBlocks(recurse=False, variable=self)
+            self._memdev.checkBlocks(recurse=False, variable=self)
+
+    def get(self, read=True):
+        with self._memdev._memLock:
+            self._memdev.readBlocks(variable=self)
+            self._memdev.checkBlocks(variable=self)
+            return self._value
+
+    def value(self):
+        return self._value
+
 
 class MemoryDevice(pr.Device):
+
+    
     def __init__(self, *,
                  name=None,
                  description='',
@@ -43,6 +67,9 @@ class MemoryDevice(pr.Device):
         self._verData = odict() # verify data wread back
 
 
+    def __getitem__(self, key):
+        return MemoryVariable(self, key)
+
     def _buildBlocks(self):
         pass
 
@@ -57,9 +84,13 @@ class MemoryDevice(pr.Device):
 
     def writeBlocks(self, force=False, recurse=True, variable=None):
         if not self.enable.get(): return
-
+        
         with self._memLock:
-            self._wrValues = self._setValues
+
+            if variable is not None:
+                self._wrValues[variable._offset] = [variable._value]
+            else:
+                self._wrValues = self._setValues
             
             for offset, values in self._setValues.items():
                 wdata = self._rawTxnChunker(offset, values, self._base, self._stride, self._wordBitSize, rim.Write)
@@ -114,5 +145,14 @@ class MemoryDevice(pr.Device):
 
 
     def readBlocks(self, recurse=True, variable=None):
-        pass
+        if not self.enable.get(): return
+
+        with self._memLock:
+            if variable is not None:
+                return self._rawRead(
+                    offset=variable.offset*self._stride,
+                    numWords=1,
+                    base=self._base,
+                    stride=self._stride,
+                    wordBitSize=self._wordBitSize)
 
