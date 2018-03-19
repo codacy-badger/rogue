@@ -60,6 +60,10 @@ class Node(object):
     def __init__(self, *, name, description="", expand=True, hidden=False):
         """Init the node with passed attributes"""
 
+        # Name cannot contain whitespace
+        if any(char in name for char in string.whitespace):
+            raise NodeError(f'Node name \"{name}\" cannot contain whitespace')
+        
         # Public attributes
         self._name        = name
         self._description = description
@@ -111,20 +115,21 @@ class Node(object):
         return self.path
 
     def __getattr__(self, name):
-        """Allow child Nodes with the 'name[key]' naming convention to be accessed as if they belong to a 
-        dictionary of Nodes with that 'name'.
-        This override builds an OrderedDict of all child nodes named as 'name[key]' and returns it.
-        Raises AttributeError if no such named Nodes are found. """
-
-        ret = attrHelper(self._nodes,name)
-        if ret is None:
-            raise AttributeError('{} has no attribute {}'.format(self, name))
+        if name in self._nodes:
+            return self._nodes[name]
         else:
-            return ret
+            raise AttributeError('{} has no attribute {}'.format(self, name))
 
     def __dir__(self):
-        return(super().__dir__() + [k for k,v in self._nodes.items()])
+        return(super().__dir__() + list(self._nodes.keys()))
 
+
+    def __checkAdd(self, node):
+    
+        # Names of all sub-nodes must be unique
+        if node.name in self.__dir__():
+            
+        
     def add(self,node):
         """Add node as sub-node"""
 
@@ -136,35 +141,64 @@ class Node(object):
 
         # Fail if added to a non device node (may change in future)
         if not isinstance(self,pr.Device):
-            raise NodeError('Attempting to add node with name %s to non device node %s.' % 
-                             (node.name,self.name))
+            raise NodeError(f'Attempting to add node with name {node.name} to non device node {self.name}.')
 
         # Fail if root already exists
         if self._root is not None:
-            raise NodeError('Error adding node with name %s to %s. Tree is already started.' % 
-                             (node.name,self.name))
+            raise NodeError(f'Error adding node with name {node.name} to {self.name}. Tree is already started.')
 
         # Error if added node already has a parent
         if node._parent is not None:
-            raise NodeError('Error adding node with name %s to %s. Node is already attached.' % 
-                             (node.name,self.name))
+            raise NodeError('Error adding node with name {node.name} to {self.name}. Node is already attached.')
+        
 
-        # Names of all sub-nodes must be unique
-        if node.name in self.__dir__():
-            raise NodeError('Error adding node with name %s to %s. Name collision.' % 
-                             (node.name,self.name))
+        name = [s.replace(']', '') for s in node.name.split('[')]
+        name = name[0] + [int(x) for x in name[1:]]
 
-        self._nodes[node.name] = node 
+        d = self._nodes
+
+        for i,k in enumerate(name):
+            if not (isinstance(d, dict) or isinstance(d, list)):
+                # If we hit somethign that is not a dict or a list, its an object we already placed
+                raise NodeError(f'Error adding node with name {node.name} to {self.name}. Name collision.')
+            
+            if isinstance(d, dict) and k not in d:
+                d[k] = []
+            elif isinstance(d, list):
+                # Extend the list if necessary
+                if k >= len(d):
+                    d.extend([None]*(k-len(d)+1))
+                # Put an empty list at the index if nothing is there
+                if d[k] is None:
+                    d[k] = []
+
+            # if not last, iterate down
+            if i < len(path)-1:
+                d = d[k]
+            else:
+                # If we've put an empty list here we can overwrite it with the node
+                if d[k] == []:
+                    d[k] = node
+                else:
+                    raise NodeError(f'Error adding node with name {node.name} to {self.name}. Name collision.')
 
     def addNode(self, nodeClass, **kwargs):
         self.add(nodeClass(**kwargs))
 
-    def addNodes(self, nodeClass, number, stride, **kwargs):
-        name = kwargs.pop('name')
-        offset = kwargs.pop('offset')
-        for i in range(number):
-            self.add(nodeClass(name='{:s}[{:d}]'.format(name, i), offset=offset+(i*stride), **kwargs))
+    def addNodes(self, nodeClass, name, offset, dims, strides, **kwargs):
+        dims = list(dims) if isinstance(dims, Iterable) else [dims]
+        strides = list(strides) if isinstance(dims, Iterable) else [strides]
 
+        if len(dims) == 1:
+            # If down to 1 dimension, add the nodes
+            for d in range(dims[0]):
+                self.add(nodeClass(name=f'{name}[{d}]', offset = offset+(d*strides[0]), **kwargs))
+        else:
+            # Recurse
+            for d in range(dims[0]):
+                self.addNodeArray(nodeClass, f'{name}[{d}]', offset+d*strides[0], dims[1:], strides[1:])
+
+        
     @Pyro4.expose
     @property
     def nodeList(self):
@@ -500,35 +534,66 @@ class PyroNode(object):
         self._node.call(arg)
 
 
-def attrHelper(nodes,name):
-    """
-    Return a single item or a list of items matching the passed
+# def attrHelper(nodes,name):
+#     """
+#     Return a single item or a list of items matching the passed
 
-    name. If the name is an exact match to a single item in the list
-    then return it. Otherwise attempt to find items which match the 
-    passed name, but are array entries: name[n]. Return these items
-    as a list
-    """
-    if name in nodes:
-        return nodes[name]
+#     name. If the name is an exact match to a single item in the list
+#     then return it. Otherwise attempt to find items which match the 
+#     passed name, but are array entries: name[n]. Return these items
+#     as a list
+#     """
+#     if name in nodes:
+#         return nodes[name]
+#     else:
+#         ret = odict()
+#         rg = re.compile('{:s}\\[(.*?)\\]'.format(name))
+#         for k,v in nodes.items():
+#             m = rg.match(k)
+#             if m:
+#                 key = m.group(1)
+#                 if key.isdigit():
+#                     key = int(key)
+#                 ret[key] = v
+
+#         if len(ret) == 0:
+#             return None
+#         else:
+#             return ret
+
+
+def __getSlices(name):
+
+    split = [s.replace(']', '') for s in node.name.split('[')]
+    split = name[0] + [int(x) for x in name[1:]]
+        
+def __nodeSlice(nodes, *slices):
+    if len(args) == 1:
+        return [nodes[i] for i in range(*args[0])]
     else:
-        ret = odict()
-        rg = re.compile('{:s}\\[(.*?)\\]'.format(name))
-        for k,v in nodes.items():
-            m = rg.match(k)
-            if m:
-                key = m.group(1)
-                if key.isdigit():
-                    key = int(key)
-                ret[key] = v
+        return [__nodeSlice(nodes[i], *args[1:]) for i in range(*args[0])]
 
-        if len(ret) == 0:
-            return None
-        else:
-            return ret
+class _NodeDict(dict):
+    """ A sliceable dict """
+    def __getitem__(self, key):
+        if isinstance(key, tuple):
+            #multi-dimensional slice
+            keys = itertools.islice(self.keys(), key[0].start, key[0].stop, key[0].step)
+            key = key[1:]
+            if len(key) == 1:
+                key = key[0]
+            return {k: _NodeDict.__getitem__(self, key) for k in keys}
 
+        if isinstance(key, slice):
+            # Single dimensional slice
+            keys = itertools.islice(self.keys(), key.start, key.stop, key.step)
+            return {k: self[k] for k in keys}
 
-def nodeMatch(nodes,name):
+        # base case - normal lookup
+        return dict.get(self, key)
+
+        
+def nodeMatch(nodes, expr):
     """
     Return a list of nodes which match the given name. The name can either
     be a single value or a list accessor:
@@ -540,44 +605,61 @@ def nodeMatch(nodes,name):
 
     # First check to see if unit matches a node name
     # needed when [ and ] are in a variable or device name
-    if name in nodes:
-        return [nodes[name]]
+    if expr in nodes:
+        return [nodes[expr]]
 
-    fields = re.split('\[|\]',name)
+    idx = expr.index('[')
+    name, slices = expr[:idx], expr[idx:]
 
-    # Wildcard
-    if len(fields) > 1 and (fields[1] == '*' or fields[1] == ':'):
-        return nodeMatch(nodes,fields[0])
-    else:
-        ah = attrHelper(nodes,fields[0])
+    # First find all nodes that match the name regex
+    nameNodes = self.find(recurse=False, typ=Node, name=name)
 
-        # None or exact match is an error
-        if ah is None or not isinstance(ah,odict):
-            return None
+    slices = slices.replace('*', ':')
 
-        # Non integer keys is an error
-        if any(not isinstance(k,int) for k in ah.keys()):
-            return None
+    ret = []
 
-        # no slicing, return list
-        if len(fields) == 1:
-            return [v for k,v in ah.items()]
+    for n in nameNode:
+        if isinstance(n, Node):
+            ret.append(n)
+        elif isinstance(n, list):
+            ret.append( flatten ( eval(f'{n.name}[{slice}]') ) )
+    
 
-        # Indexed ordered dictionary returned
-        # Convert to list with gaps = None and apply slicing
-        idxLast = max(ah)
+#     fields = re.split('\[|\]',name)
 
-        ret = [None] * (idxLast+1)
-        for i,n in ah.items():
-            ret[i] = n
+#     # Wildcard
+#     if len(fields) > 1 and (fields[1] == '*' or fields[1] == ':'):
+#         return nodeMatch(nodes,fields[0])
+#     else:
+#         ah = attrHelper(nodes,fields[0])
 
-        r =  eval('ret[{}]'.format(fields[1]))
+#         # None or exact match is an error
+#         if ah is None or not isinstance(ah,odict):
+#             return None
 
-        if r is None or any(v == None for v in r):
-            return None
-        elif isinstance(r,collections.Iterable):
-            return r
-        else:
-            return [r]
+#         # Non integer keys is an error
+#         if any(not isinstance(k,int) for k in ah.keys()):
+#             return None
+
+#         # no slicing, return list
+#         if len(fields) == 1:
+#             return [v for k,v in ah.items()]
+
+#         # Indexed ordered dictionary returned
+#         # Convert to list with gaps = None and apply slicing
+#         idxLast = max(ah)
+
+#         ret = [None] * (idxLast+1)
+#         for i,n in ah.items():
+#             ret[i] = n
+
+#         r =  eval('ret[{}]'.format(fields[1]))
+
+#         if r is None or any(v == None for v in r):
+#             return None
+#         elif isinstance(r,collections.Iterable):
+#             return r
+#         else:
+#             return [r]
 
 
