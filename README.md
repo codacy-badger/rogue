@@ -80,7 +80,7 @@ On Ubuntu:
 
 ````
 $ apt-get install libzmq-dev
-$ apt-get install 
+$ apt-get install python3-pyqt4
 ````
 
 On archlinux:
@@ -157,6 +157,7 @@ $ git pull
 $ git submodule update
 $ cd build
 $ make rebuild_cache
+$ make clean
 $ make 
 ````
 

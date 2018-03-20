@@ -40,7 +40,7 @@ rpp::ControllerV2Ptr rpp::ControllerV2::create ( bool enIbCrc, bool enObCrc, rpp
 }
 
 //! Creator
-rpp::ControllerV2::ControllerV2 ( bool enIbCrc, bool enObCrc, rpp::TransportPtr tran, rpp::ApplicationPtr * app ) : rpp::Controller::Controller(tran, app, 8, 8) {
+rpp::ControllerV2::ControllerV2 ( bool enIbCrc, bool enObCrc, rpp::TransportPtr tran, rpp::ApplicationPtr * app ) : rpp::Controller::Controller(tran, app, 8, 8, 8) {
 
    enIbCrc_ = enIbCrc;
    enObCrc_ = enObCrc;
@@ -67,7 +67,7 @@ void rpp::ControllerV2::transportRx( ris::FramePtr frame ) {
    uint32_t  tmpCrc;
    uint8_t * data;
 
-   if ( frame->getCount() == 0 ) {
+   if ( frame->isEmpty() ) {
       log_->warning("Bad incoming transportRx frame, size=0");
       return;
    }
@@ -75,12 +75,12 @@ void rpp::ControllerV2::transportRx( ris::FramePtr frame ) {
    rogue::GilRelease noGil;
    boost::lock_guard<boost::mutex> lock(tranMtx_);
 
-   buff = frame->getBuffer(0);
-   data = buff->getPayloadData();
+   buff = *(frame->beginBuffer());
+   data = buff->begin();
    size = buff->getPayload();
 
    // Drop invalid data
-   if ( frame->getError()    || // Check for frame ERROR
+   if ( frame->getError() ||     // Check for frame ERROR
       (size < 24)         ||     // Check for min. size (64-bit header + 64-bit min. payload + 64-bit tail) 
       ((size&0x7) > 0)    ||     // Check for non 64-bit alignment
       ((data[0]&0xF) != 0x2) ) { // Check for invalid version only (ignore the CRC mode flag)
@@ -105,20 +105,19 @@ void rpp::ControllerV2::transportRx( ris::FramePtr frame ) {
    last     = uint32_t(data[size-6]);
 
    if(enIbCrc_){
-   // Tail word 1
-   tmpCrc  = uint32_t(data[size-1]) << 0;
-   tmpCrc |= uint32_t(data[size-2]) << 8;
-   tmpCrc |= uint32_t(data[size-3]) << 16;
-   tmpCrc |= uint32_t(data[size-4]) << 24;
-   // Compute CRC
+      // Tail word 1
+      tmpCrc  = uint32_t(data[size-1]) << 0;
+      tmpCrc |= uint32_t(data[size-2]) << 8;
+      tmpCrc |= uint32_t(data[size-3]) << 16;
+      tmpCrc |= uint32_t(data[size-4]) << 24;
+      // Compute CRC
       boost::crc_basic<32> result( 0x04C11DB7, crcInit_[tmpDest], 0xFFFFFFFF, true, true );
       result.process_bytes(data,size-4);
       crc = result.checksum();
       crcInit_[tmpDest] = result.get_interim_remainder();
       crcErr = (tmpCrc != crc);
-   } else {
-      crcErr = false;
-   }
+   } 
+   else crcErr = false;
    
    log_->debug("transportRx: Raw header: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x",
          data[0],data[1],data[2],data[3],data[4],data[5],data[6],data[7]);
@@ -166,16 +165,17 @@ void rpp::ControllerV2::transportRx( ris::FramePtr frame ) {
       if ( tmpEof ) flags |= uint32_t(tmpLuser) << 8;
       flags += tmpId   << 16;
       flags += tmpDest << 24;
-      frame->setFlags(flags);
+      tranFrame_[tmpDest]->setFlags(flags);
    }
 
    tranFrame_[tmpDest]->appendBuffer(buff);
+   //frame->clear();
 
    // Last of transfer
    if ( tmpEof ) {
-      flags = frame->getFlags() & 0xFFFF00FF;
+      flags = tranFrame_[tmpDest]->getFlags() & 0xFFFF00FF;
       flags |= uint32_t(tmpLuser) << 8;
-      frame->setFlags(flags);
+      tranFrame_[tmpDest]->setFlags(flags);
 
       transSof_[tmpDest]  = true;
       tranCount_[tmpDest] = 0;
@@ -193,9 +193,9 @@ void rpp::ControllerV2::transportRx( ris::FramePtr frame ) {
 
 //! Frame received at application interface
 void rpp::ControllerV2::applicationRx ( ris::FramePtr frame, uint8_t tDest ) {
-   ris::BufferPtr buff;
+   ris::Frame::BufferIterator it;
+   uint32_t segment;
    uint8_t * data;
-   uint32_t x;
    uint32_t size;
    uint8_t  fUser;
    uint8_t  lUser;
@@ -216,8 +216,10 @@ void rpp::ControllerV2::applicationRx ( ris::FramePtr frame, uint8_t tDest ) {
    }
    else gettimeofday(&endTime,NULL);
 
-   if ( frame->getCount() == 0 ) 
-      throw(rogue::GeneralError("packetizer::ControllerV2::applicationRx","Frame must not be empty"));
+   if ( frame->isEmpty() ) {
+      log_->warning("Bad incoming applicationRx frame, size=0");
+      return;
+   }
 
    if ( frame->getError() ) return;
 
@@ -238,28 +240,25 @@ void rpp::ControllerV2::applicationRx ( ris::FramePtr frame, uint8_t tDest ) {
    lUser = (frame->getFlags() >> 8) & 0xFF;
    tId   = (frame->getFlags() >> 16) & 0xFF;
 
-   for (x=0; x < frame->getCount(); x++ ) {
+   segment = 0;
+   for (it=frame->beginBuffer(); it != frame->endBuffer(); ++it) {
       ris::FramePtr tFrame = ris::Frame::create();
-      buff = frame->getBuffer(x);
 
-      size = buff->getPayload();
-      last = size & 0x7;
-      
-      // Shift to 64-bit alignment
-      if ( last != 0 ) size = (0xFFFFFFF8 & size) + 8;
-      else last = 8;
-      
+      // Compute last, and alignt payload to 64-bits
+      last = (*it)->getPayload() % 8;
+      if ( last == 0 ) last = 8;
+      (*it)->adjustPayload(8-last);
+         
       // Rem 8 bytes head and tail reservation before setting new size
-      buff->adjustHeader(-8);
-      buff->adjustTail(-8);
+      (*it)->adjustHeader(-8);
+      (*it)->adjustTail(-8);
 
-      // Add tail to payload, set new size
-      size += 8;
-      buff->setPayload(size);
+      // Add tail to payload, set new size (header reduction added 8)
+      (*it)->adjustPayload(8);
 
-      // Get data pointer
-      data = buff->getPayloadData();
-      size = buff->getPayload();
+      // Get data pointer and new size
+      data = (*it)->begin();
+      size = (*it)->getPayload();
 
       // Header word 0
       data[0] = 0x2; // (Version=0x2)
@@ -269,24 +268,24 @@ void rpp::ControllerV2::applicationRx ( ris::FramePtr frame, uint8_t tDest ) {
       data[3] = tId;
 
       // Header word 1
-      data[4] = x & 0xFF;
-      data[5] = (x >>  8) & 0xFF;
+      data[4] = segment & 0xFF;
+      data[5] = (segment >>  8) & 0xFF;
       data[6] = 0;
-      data[7] = (x == 0) ? 0x80 : 0x0; // SOF (PACKETIZER2_HDR_SOF_BIT_C = 63)
+      data[7] = (segment == 0) ? 0x80 : 0x0; // SOF (PACKETIZER2_HDR_SOF_BIT_C = 63)
 
       // Tail  word 0
       data[size-8] = lUser;
-      data[size-7] = (x == (frame->getCount() - 1)) ? 0x1 : 0x0; // EOF
+      data[size-7] = (it == (frame->endBuffer()-1)) ? 0x1 : 0x0; // EOF
       data[size-6] = last;
       data[size-5] = 0;
       
       if(enObCrc_){
-      // Compute CRC
+         // Compute CRC
          boost::crc_basic<32> result( 0x04C11DB7, crcInit, 0xFFFFFFFF, true, true );
          result.process_bytes(data,size-4);
-      crc = result.checksum();
+         crc = result.checksum();
          crcInit = result.get_interim_remainder();
-      // Tail  word 1
+         // Tail  word 1
          data[size-1] = (crc >>  0) & 0xFF;
          data[size-2] = (crc >>  8) & 0xFF;
          data[size-3] = (crc >> 16) & 0xFF;
@@ -298,15 +297,18 @@ void rpp::ControllerV2::applicationRx ( ris::FramePtr frame, uint8_t tDest ) {
          data[size-4] = 0;
       }
       
-      log_->debug("applicationRx: Gen frame: Fuser=0x%x, Dest=0x%x, Id=0x%x, Count=%i, Sof=%i, Luser=0x%x, Eof=%i, Last=%i",
-            fUser, tDest, tId, x, data[7], lUser, data[size-7], last);
+      log_->debug("applicationRx: Gen frame: Size=%i, Fuser=0x%x, Dest=0x%x, Id=0x%x, Count=%i, Sof=%i, Luser=0x%x, Eof=%i, Last=%i",
+            (*it)->getPayload(), fUser, tDest, tId, segment, data[7], lUser, data[size-7], last);
       log_->debug("applicationRx: Raw header: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x",
             data[0],data[1],data[2],data[3],data[4],data[5],data[6],data[7]);
       log_->debug("applicationRx: Raw footer: 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x, 0x%x",
             data[size-8],data[size-7],data[size-6],data[size-5],data[size-4],data[size-3],data[size-2],data[size-1]);
 
-      tFrame->appendBuffer(buff);
+      tFrame->appendBuffer(*it);
       tranQueue_.push(tFrame);
+      segment++;
    }
    appIndex_++;
+   //frame->clear();
 }
+

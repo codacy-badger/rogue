@@ -25,14 +25,22 @@ import math
 import time
 
 class EnableVariable(pr.BaseVariable):
-    def __init__(self, *, enabled):
+    def __init__(self, *, enabled, deps):
         pr.BaseVariable.__init__(
             self,
             description='Determines if device is enabled for hardware access',            
             name='enable',
             mode='RW',
             value=enabled, 
-            disp={False: 'False', True: 'True', 'parent': 'ParentFalse'})
+            disp={False: 'False', True: 'True', 'parent': 'ParentFalse', 'deps': 'ExtDepFalse'})
+
+        if deps is None:
+            self._deps = []
+        else:
+            self._deps = deps
+
+        for d in self._deps:
+            d.addListener(self)
 
         self._value = enabled
         self._lock = threading.Lock()
@@ -43,9 +51,12 @@ class EnableVariable(pr.BaseVariable):
     @Pyro4.expose
     def get(self, read=False):
         ret = self._value
+
         with self._lock:
             if self._value is False:
                 ret = False
+            elif len(self._deps) > 0 and not all(x.value() for x in self._deps):
+                ret = 'deps'
             elif self._parent == self._root:
                 #print("Root enable = {}".format(self._value))
                 ret = self._value
@@ -61,13 +72,13 @@ class EnableVariable(pr.BaseVariable):
         
     @Pyro4.expose
     def set(self, value, write=True):
-        if value != 'parent':
+        if value != 'parent' and value != 'deps':
             old = self.value()
 
             with self._lock:
                 self._value = value
             
-            if old != value and old != 'parent':
+            if old != value and old != 'parent' and old != 'deps':
                 self.parent.enableChanged(value)
 
         self.updated()
@@ -95,7 +106,10 @@ class Device(pr.Node,rim.Hub):
                  variables=None,
                  blockSize=None,
                  expand=True,
-                 enabled=True):
+                 enabled=True,
+                 defaults=None,
+                 enableDeps=None):
+
         
         """Initialize device class"""
         if name is None:
@@ -110,6 +124,7 @@ class Device(pr.Node,rim.Hub):
         self._memLock   = threading.RLock()
         self._size      = size
         self._blockSize = blockSize
+        self._defaults  = defaults if defaults is not None else {}
 
         # Connect to memory slave
         if memBase: self._setSlave(memBase)
@@ -128,7 +143,7 @@ class Device(pr.Node,rim.Hub):
         self.addRemoteCommands = ft.partial(self.addNodes, pr.RemoteCommand)
 
         # Variable interface to enable flag
-        self.add(EnableVariable(enabled=enabled))
+        self.add(EnableVariable(enabled=enabled, deps=enableDeps))
 
         if variables is not None and isinstance(variables, collections.Iterable):
             if all(isinstance(v, pr.BaseVariable) for v in variables):
@@ -144,6 +159,8 @@ class Device(pr.Node,rim.Hub):
             args = getattr(cmd, 'PyrogueCommandArgs')
             if 'name' not in args:
                 args['name'] = cmd.__name__
+
+            print("Adding command {} using depcreated decorator. Please use __init__ decorators instead!".format(args['name']))
             self.add(pr.LocalCommand(function=cmd, **args))
 
     @Pyro4.expose
@@ -155,6 +172,16 @@ class Device(pr.Node,rim.Hub):
     @property
     def offset(self):
         return self._getOffset()
+
+    @Pyro4.expose
+    @property
+    def size(self):
+        return self._size
+
+    @Pyro4.expose
+    @property
+    def memBaseId(self):
+        return self._reqSlaveId()
 
     def add(self,node):
         # Call node add
@@ -296,6 +323,10 @@ class Device(pr.Node,rim.Hub):
         self.checkBlocks(recurse=recurse, variable=variable)
 
     def _rawTxnChunker(self, offset, data, base=pr.UInt, stride=4, wordBitSize=32, txnType=rim.Write, numWords=1):
+        if offset + (numWords * stride) >= self._size:
+            raise pr.MemoryError(name=self.name, address=offset|self.address,
+                                 msg='Raw transaction outside of device size')
+
         if wordBitSize > stride*8:
             raise pr.MemoryError(name=self.name, address=offset|self.address,
                                  msg='Called raw memory access with wordBitSize > stride')
@@ -384,14 +415,21 @@ class Device(pr.Node,rim.Hub):
             for i in range(1,len(remVars)):
 
                 # Variable overlaps the range of the previous variable
-                if (remVars[i].offset != remVars[i-1].offset) and (remVars[i].offset <= (remVars[i-1].varBytes-1)):
-                    self._log.warning("Overlap detected cur offset={} prev offset={} prev bytes={}".format(remVars[i].offset,remVars[i-1].offset,remVars[i-1].varBytes))
+                if (remVars[i].offset != remVars[i-1].offset) and \
+                   (remVars[i].offset <= (remVars[i-1].offset + remVars[i-1].varBytes - 1)):
+                    self._log.info("Overlap detected cur offset={} prev offset={} prev bytes={}".format(
+                        remVars[i].offset,remVars[i-1].offset,remVars[i-1].varBytes))
                     remVars[i]._shiftOffsetDown(remVars[i].offset - remVars[i-1].offset, blkSize)
                     done = False
                     break
 
         # Add variables
         for n in remVars:
+
+            # Adjust device size
+            if (n.offset + n.varBytes) > self._size:
+                self._size = (n.offset + n.varBytes)
+
             if not any(block._addVariable(n) for block in self._blocks):
                 self._log.debug("Adding new block {} at offset {:#02x}".format(n.name,n.offset))
                 self._blocks.append(pr.RemoteBlock(variable=n))
@@ -399,13 +437,19 @@ class Device(pr.Node,rim.Hub):
     def _rootAttached(self, parent, root):
         pr.Node._rootAttached(self, parent, root)
 
-        self._maxTxnSize = self._reqMaxAccess()
-        self._minTxnSize = self._reqMinAccess()        
+        self._maxTxnSize = self._doMaxAccess()
+        self._minTxnSize = self._doMinAccess()
 
         for key,value in self._nodes.items():
             value._rootAttached(self,root)
 
         self._buildBlocks()
+
+        # Override defaults as dictated by the _defaults dict
+        for varName, defValue in self._defaults.items():
+            match = pr.nodeMatch(self.variables, varName)
+            for var in match:
+                var._default = defValue
 
         # Some variable initialization can run until the blocks are built
         for v in self.variables.values():

@@ -120,7 +120,7 @@ ris::FramePtr rpr::Controller::reqFrame ( uint32_t size ) {
 
    // Forward frame request to transport slave
    frame = tran_->reqFrame (nSize, false);
-   buffer = frame->getBuffer(0);
+   buffer = *(frame->beginBuffer());
 
    // Make sure there is enough room the buffer for our header
    if ( buffer->getAvailable() < rpr::Header::HeaderSize )
@@ -131,12 +131,9 @@ ris::FramePtr rpr::Controller::reqFrame ( uint32_t size ) {
    // Update buffer to include our header space.
    buffer->adjustHeader(rpr::Header::HeaderSize);
 
-   // Trim multi buffer frames, RSSI can not work on payloads
-   // with multiple buffers.
-   if ( frame->getCount() > 1 ) {
-      frame = ris::Frame::create();
-      frame->appendBuffer(buffer);
-   }
+   // Recreate frame to ensure outbound only has a single buffer
+   frame = ris::Frame::create();
+   frame->appendBuffer(buffer);
 
    // Return frame
    return(frame);
@@ -146,7 +143,7 @@ ris::FramePtr rpr::Controller::reqFrame ( uint32_t size ) {
 void rpr::Controller::transportRx( ris::FramePtr frame ) {
    rpr::HeaderPtr head = rpr::Header::create(frame);
 
-   if ( frame->getCount() == 0 || ! head->verify() ) {
+   if ( frame->isEmpty() || ! head->verify() ) {
       log_->info("Dumping frame state=%i server=%i",state_,server_);
       dropCount_++;
       return;
@@ -163,13 +160,27 @@ void rpr::Controller::transportRx( ris::FramePtr frame ) {
    tranBusy_ = head->busy;
 
    // Reset
-   if ( ( state_ == StOpen || state_ == StWaitSyn) && head->rst ) {
-      rogue::GilRelease noGil;
-      stQueue_.push(head);
+   if ( head->rst ) {
+      if ( state_ == StOpen || state_ == StWaitSyn ) {
+         rogue::GilRelease noGil;
+         stQueue_.push(head);
+      }
+   }
+
+   // Syn frame goes to state machine if state = open 
+   // or we are waiting for ack replay
+   else if ( head->syn ) {
+      if ( state_ == StOpen || state_ == StWaitSyn ) {
+         lastSeqRx_ = head->sequence;
+         nextSeqRx_ = lastSeqRx_ + 1;
+
+         rogue::GilRelease noGil;
+         stQueue_.push(head);
+      }
    }
 
    // Data or NULL in the correct sequence go to application
-   if ( state_ == StOpen && head->sequence == nextSeqRx_ && 
+   else if ( state_ == StOpen && head->sequence == nextSeqRx_ && 
         ( head->nul || frame->getPayload() > rpr::Header::HeaderSize ) ) {
       lastSeqRx_ = nextSeqRx_;
       nextSeqRx_ = nextSeqRx_ + 1;
@@ -179,16 +190,6 @@ void rpr::Controller::transportRx( ris::FramePtr frame ) {
          rogue::GilRelease noGil;
          appQueue_.push(head);
       }
-   }
-
-   // Syn frame goes to state machine if state = open 
-   // or we are waiting for ack replay
-   else if ( ( state_ == StOpen || state_ == StWaitSyn) && head->syn ) {
-      lastSeqRx_ = head->sequence;
-      nextSeqRx_ = lastSeqRx_ + 1;
-
-      rogue::GilRelease noGil;
-      stQueue_.push(head);
    }
 }
 
@@ -204,7 +205,7 @@ ris::FramePtr rpr::Controller::applicationTx() {
       stCond_.notify_all();
 
       frame = head->getFrame();
-      frame->getBuffer(0)->adjustHeader(rpr::Header::HeaderSize);
+      (*(frame->beginBuffer()))->adjustHeader(rpr::Header::HeaderSize);
    }
    return(frame);
 }
@@ -216,11 +217,13 @@ void rpr::Controller::applicationRx ( ris::FramePtr frame ) {
 
    gettimeofday(&startTime,NULL);
 
-   if ( frame->getCount() == 0 ) 
-      throw(rogue::GeneralError("rss::Controller::applicationRx","Frame must not be empty"));
+   if ( frame->isEmpty() ) {
+      log_->info("Dumping empty application frame");
+      return;
+   }
 
    // Adjust header in first buffer
-   frame->getBuffer(0)->adjustHeader(-rpr::Header::HeaderSize);
+   (*(frame->beginBuffer()))->adjustHeader(-rpr::Header::HeaderSize);
 
    // Map to RSSI 
    rpr::HeaderPtr head = rpr::Header::create(frame);
@@ -478,6 +481,7 @@ uint32_t rpr::Controller::stateSendSynAck () {
    txListCount_ = 0;
    lock.unlock();
 
+   // We should probably wait for an ack here.
    //if ( locAckRx != locSeqTx ) {
 
    // Update state

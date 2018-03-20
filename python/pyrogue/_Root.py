@@ -79,7 +79,7 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
         self._pyroDaemon = None
 
         # Variable update list
-        self._updatedDict = None
+        self._updatedYaml = None
         self._updatedLock = threading.Lock()
 
         # Variable update listener
@@ -95,6 +95,32 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
         self.add(pr.LocalVariable(name='ForceWrite', value=False, mode='RW', hidden=True,
             description='Configuration Flag To Control Write All Block'))
 
+        # Commands
+        self.add(pr.LocalCommand(name='WriteAll', function=self._write, 
+                                 description='Write all values to the hardware'))
+
+        self.add(pr.LocalCommand(name="ReadAll", function=self._read,
+                                 description='Read all values from the hardware'))
+
+        self.add(pr.LocalCommand(name='WriteConfig', value='', function=self._writeConfig,
+                                 description='Write configuration to passed filename in YAML format'))
+
+        self.add(pr.LocalCommand(name='ReadConfig', value='', function=self._readConfig,
+                                 description='Read configuration from passed filename in YAML format'))
+
+        self.add(pr.LocalCommand(name='SoftReset', function=self._softReset,
+                                 description='Generate a soft reset to each device in the tree'))
+
+        self.add(pr.LocalCommand(name='HardReset', function=self._hardReset,
+                                 description='Generate a hard reset to each device in the tree'))
+
+        self.add(pr.LocalCommand(name='CountReset', function=self._countReset,
+                                 description='Generate a count reset to each device in the tree'))
+
+        self.add(pr.LocalCommand(name='ClearLog', function=self._clearLog,
+                                 description='Clear the message log cntained in the SystemLog variable'))
+
+
     def start(self, initRead=False, initWrite=False, pollEn=True, pyroGroup=None, pyroHost=None, pyroNs=None):
         """Setup the tree. Start the polling thread."""
 
@@ -109,6 +135,16 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
 
         for key,value in self._nodes.items():
             value._rootAttached(self,self)
+
+        # Look for device overlaps
+        tmpDevs = self.deviceList
+        tmpDevs.sort(key=lambda x: (x.memBaseId, x.address, x.size))
+
+        for i in range(1,len(tmpDevs)):
+            if (tmpDevs[i].size != 0) and (tmpDevs[i].memBaseId == tmpDevs[i-1].memBaseId) and \
+                (tmpDevs[i].address <= (tmpDevs[i-1].address + tmpDevs[i-1].size)):
+                raise pr.NodeError("Device {} at address={} overlaps {} at address={} with size={}".format(
+                    tmpDevs[i].path,tmpDevs[i].address,tmpDevs[i-1].path,tmpDevs[i-1].address,tmpDevs[i-1].size))
 
         # Get list of deprecated nodes
         lst = self._getDepWarn()
@@ -243,6 +279,11 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
         for key, value in d.items():
             if key == self.name:
                 self._setDict(value,writeEach,modes)
+            else:
+                try:
+                    self._getPath(key).setDisp(value)
+                except:
+                    self._log.error("Entry {} not found".format(key))
 
         self._doneUpdatedVars()
 
@@ -311,17 +352,15 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
     def _initUpdatedVars(self):
         """Initialize the update tracking log before a bulk variable update"""
         with self._updatedLock:
-            self._updatedDict = odict()
+            self._updatedYaml = ""
 
     def _doneUpdatedVars(self):
         """Stream the results of a bulk variable update and update listeners"""
         with self._updatedLock:
-            if self._updatedDict:
-                yml = dictToYaml(self._updatedDict,default_flow_style=False)
-                self._sendYamlFrame(yml)
-                self._updatedDict = None
+            if self._updatedYaml:
+                self._sendYamlFrame(self._updatedYaml)
+                self._updatedYaml = None
 
-    @pr.command(order=7, name='WriteAll', description='Write all values to the hardware')
     def _write(self):
         """Write all blocks"""
         self._log.info("Start root write")
@@ -335,7 +374,6 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
             self._log.exception(e)
         self._log.info("Done root write")
 
-    @pr.command(order=6, name="ReadAll", description='Read all values from the hardware')
     def _read(self):
         """Read all blocks"""
         self._log.info("Start root read")
@@ -349,7 +387,6 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
         self._doneUpdatedVars()
         self._log.info("Done root read")
 
-    @pr.command(order=0, name='WriteConfig', value='', description='Write configuration to passed filename in YAML format')
     def _writeConfig(self,arg):
         """Write YAML configuration to a file. Called from command"""
         try:
@@ -358,7 +395,6 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
         except Exception as e:
             self._log.exception(e)
 
-    @pr.command(order=1, name='ReadConfig', value='', description='Read configuration from passed filename in YAML format')
     def _readConfig(self,arg):
         """Read YAML configuration from a file. Called from command"""
         try:
@@ -367,23 +403,19 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
         except Exception as e:
             self._log.exception(e)
 
-    @pr.command(order=3, name='SoftReset', description='Generate a soft reset to each device in the tree')
     def _softReset(self):
         """Generate a soft reset on all devices"""
         self.callRecursive('softReset', nodeTypes=[pr.Device])
 
-    @pr.command(order=2, name='HardReset', description='Generate a hard reset to each device in the tree')
     def _hardReset(self):
         """Generate a hard reset on all devices"""
         self.callRecursive('hardReset', nodeTypes=[pr.Device])        
         self._clearLog()
 
-    @pr.command(order=4, name='CountReset', description='Generate a count reset to each device in the tree')
     def _countReset(self):
         """Generate a count reset on all devices"""
         self.callRecursive('countReset', nodeTypes=[pr.Device])        
 
-    @pr.command(order=5, name='ClearLog', description='Clear the message log cntained in the SystemLog variable')
     def _clearLog(self):
         """Clear the system log"""
         with self._sysLogLock:
@@ -408,17 +440,13 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
                     self._log.error("Pyro callback failed for {}: {}".format(self.name,msg))
 
         with self._updatedLock:
+            yml = (f"{path}:{disp}" + "\n")
 
             # Log is active add to log
-            if self._updatedDict is not None:
-                addPathToDict(self._updatedDict,path,disp)
+            if self._updatedYaml is not None: self._updatedYaml += yml
 
             # Otherwise act directly
-            else:
-                d   = {}
-                addPathToDict(d,path,disp)
-                yml = dictToYaml(d,default_flow_style=False)
-                self._sendYamlFrame(yml)
+            else: self._sendYamlFrame(yml)
 
 
 class PyroRoot(pr.PyroNode):
@@ -485,26 +513,6 @@ class PyroClient(object):
             return ret
         except:
             raise pr.NodeError("PyroClient Failed to find {}.{}.".format(self._group,name))
-
-
-def addPathToDict(d, path, value):
-    """Helper function to add a path/value pair to a dictionary tree"""
-    npath = path
-    sd = d
-
-    # Transit through levels
-    while '.' in npath:
-        base  = npath[:npath.find('.')]
-        npath = npath[npath.find('.')+1:]
-
-        if base in sd:
-           sd = sd[base]
-        else:
-           sd[base] = odict()
-           sd = sd[base]
-
-    # Add final node
-    sd[npath] = value
 
 
 def yamlToDict(stream, Loader=yaml.Loader, object_pairs_hook=odict):
