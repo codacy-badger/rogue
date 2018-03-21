@@ -23,6 +23,8 @@ import Pyro4
 import functools as ft
 import parse
 import collections
+import string
+import itertools
 
 def logInit(cls=None,name=None):
     """Init a logging pbject. Set global options."""
@@ -124,12 +126,6 @@ class Node(object):
         return(super().__dir__() + list(self._nodes.keys()))
 
 
-    def __checkAdd(self, node):
-    
-        # Names of all sub-nodes must be unique
-        if node.name in self.__dir__():
-            
-        
     def add(self,node):
         """Add node as sub-node"""
 
@@ -158,19 +154,13 @@ class Node(object):
         d = self._nodes
 
         for i,k in enumerate(name):
-            if not (isinstance(d, dict) or isinstance(d, list)):
-                # If we hit somethign that is not a dict or a list, its an object we already placed
+            if not (isinstance(d, dict)):
+                # If we hit somethign that is not a dict, its an object we already placed
                 raise NodeError(f'Error adding node with name {node.name} to {self.name}. Name collision.')
             
             if isinstance(d, dict) and k not in d:
-                d[k] = []
-            elif isinstance(d, list):
-                # Extend the list if necessary
-                if k >= len(d):
-                    d.extend([None]*(k-len(d)+1))
-                # Put an empty list at the index if nothing is there
-                if d[k] is None:
-                    d[k] = []
+                # create a new dict at this level if it doesnt yet exist
+                d[k] = _NodeDict()
 
             # if not last, iterate down
             if i < len(path)-1:
@@ -534,45 +524,6 @@ class PyroNode(object):
         self._node.call(arg)
 
 
-# def attrHelper(nodes,name):
-#     """
-#     Return a single item or a list of items matching the passed
-
-#     name. If the name is an exact match to a single item in the list
-#     then return it. Otherwise attempt to find items which match the 
-#     passed name, but are array entries: name[n]. Return these items
-#     as a list
-#     """
-#     if name in nodes:
-#         return nodes[name]
-#     else:
-#         ret = odict()
-#         rg = re.compile('{:s}\\[(.*?)\\]'.format(name))
-#         for k,v in nodes.items():
-#             m = rg.match(k)
-#             if m:
-#                 key = m.group(1)
-#                 if key.isdigit():
-#                     key = int(key)
-#                 ret[key] = v
-
-#         if len(ret) == 0:
-#             return None
-#         else:
-#             return ret
-
-
-def __getSlices(name):
-
-    split = [s.replace(']', '') for s in node.name.split('[')]
-    split = name[0] + [int(x) for x in name[1:]]
-        
-def __nodeSlice(nodes, *slices):
-    if len(args) == 1:
-        return [nodes[i] for i in range(*args[0])]
-    else:
-        return [__nodeSlice(nodes[i], *args[1:]) for i in range(*args[0])]
-
 class _NodeDict(dict):
     """ A sliceable dict """
     def __getitem__(self, key):
@@ -582,7 +533,7 @@ class _NodeDict(dict):
             key = key[1:]
             if len(key) == 1:
                 key = key[0]
-            return {k: _NodeDict.__getitem__(self, key) for k in keys}
+            return {k: _NodeDict.__getitem__(dict.get(self, k), key) for k in keys}
 
         if isinstance(key, slice):
             # Single dimensional slice
@@ -592,7 +543,14 @@ class _NodeDict(dict):
         # base case - normal lookup
         return dict.get(self, key)
 
-        
+def flattenDict(d, func):
+    for elem in getattr(d, func)():
+        if isinstance(elem, dict):
+            for x in flattenDict(elem, func):
+                yield x
+        else:
+            yield elem
+    
 def nodeMatch(nodes, expr):
     """
     Return a list of nodes which match the given name. The name can either
@@ -622,44 +580,9 @@ def nodeMatch(nodes, expr):
         if isinstance(n, Node):
             ret.append(n)
         elif isinstance(n, list):
-            ret.append( flatten ( eval(f'{n.name}[{slice}]') ) )
+            d = eval(f'{n.name}{slice}')
+            ret.append(list(flattenDict(d, 'values')))
+
+    return ret
     
-
-#     fields = re.split('\[|\]',name)
-
-#     # Wildcard
-#     if len(fields) > 1 and (fields[1] == '*' or fields[1] == ':'):
-#         return nodeMatch(nodes,fields[0])
-#     else:
-#         ah = attrHelper(nodes,fields[0])
-
-#         # None or exact match is an error
-#         if ah is None or not isinstance(ah,odict):
-#             return None
-
-#         # Non integer keys is an error
-#         if any(not isinstance(k,int) for k in ah.keys()):
-#             return None
-
-#         # no slicing, return list
-#         if len(fields) == 1:
-#             return [v for k,v in ah.items()]
-
-#         # Indexed ordered dictionary returned
-#         # Convert to list with gaps = None and apply slicing
-#         idxLast = max(ah)
-
-#         ret = [None] * (idxLast+1)
-#         for i,n in ah.items():
-#             ret[i] = n
-
-#         r =  eval('ret[{}]'.format(fields[1]))
-
-#         if r is None or any(v == None for v in r):
-#             return None
-#         elif isinstance(r,collections.Iterable):
-#             return r
-#         else:
-#             return [r]
-
 
