@@ -192,11 +192,11 @@ class Node(object):
     def node(self, path):
         return self._nodes[path]
 
+
     @Pyro4.expose
     @property
-    def isDevice(self):
-        return isinstance(self,pr.Device)
-
+    def isCommand(self):
+        return isinstance(self,pr.BaseCommand)
 
     def find(self, *, recurse=True, typ=None, **kwargs):
         """ 
