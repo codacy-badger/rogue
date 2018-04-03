@@ -77,7 +77,7 @@ class Node(object):
         # Tracking
         self._parent = None
         self._root   = None
-        self._nodes  = odict()
+        self._nodes  = _NodeDict()
         self._bases  = None
 
         # Setup logging
@@ -150,11 +150,18 @@ class Node(object):
 
         # Extract node name and indicies (if any)
         name = [s.replace(']', '') for s in node.name.split('[')]
-        name = name[0] + [int(x) for x in name[1:]]
+        try:
+            name = [name[0]] + [int(x) for x in name[1:]]
+        except ValueError:
+            #If there is an index that can't parse to an int, don't try. Just add as the whole name"
+            name = node.name
+            
+        print(f"Adding {name}")
 
         d = self._nodes
 
         for i,k in enumerate(name):
+            print(f'Add: i:{i}, k:{k}')
             if not (isinstance(d, _NodeDict)):
                 # If we hit somethign that is not a dict, its an object we already placed
                 raise NodeError(f'Error adding node with name {node.name} to {self.name}. Name collision.')
@@ -164,11 +171,13 @@ class Node(object):
                 d[k] = _NodeDict()
 
             # if not last, iterate down
-            if i < len(path)-1:
+            if i < len(name)-1:
+                print('Iterating down')
                 d = d[k]
             else:
                 # If we've put an empty dict here we can overwrite it with the node
                 if len(d[k]) == 0:
+                    print(f'Adding at {k}')                    
                     d[k] = node
                 else:
                     raise NodeError(f'Error adding node with name {node.name} to {self.name}. Name collision.')
@@ -176,9 +185,15 @@ class Node(object):
     def addNode(self, nodeClass, **kwargs):
         self.add(nodeClass(**kwargs))
 
-    def addNodes(self, nodeClass, name, offset, dims, strides, **kwargs):
-        dims = list(dims) if isinstance(dims, Iterable) else [dims]
-        strides = list(strides) if isinstance(dims, Iterable) else [strides]
+    def addNodes(self, nodeClass, name, offset, number=None, stride=None, dims=None, strides=None, **kwargs):
+
+        if number is not None:
+            dims = [number]
+        if stride is not None:
+            strides = [stride]
+            
+        dims = list(dims) if isinstance(dims, collections.Iterable) else [dims]
+        strides = list(strides) if isinstance(dims, collections.Iterable) else [strides]
 
         if len(dims) == 1:
             # If down to 1 dimension, add the nodes
@@ -187,7 +202,7 @@ class Node(object):
         else:
             # Recurse
             for d in range(dims[0]):
-                self.addNodeArray(nodeClass, f'{name}[{d}]', offset+d*strides[0], dims[1:], strides[1:])
+                self.addNodes(nodeClass, f'{name}[{d}]', offset+d*strides[0], dims=dims[1:], strides=strides[1:], **kwargs)
 
         
     @Pyro4.expose
@@ -202,8 +217,13 @@ class Node(object):
         pass a class type to receive a certain type of node
         class type may be a string when called over Pyro4
         """
-        return odict([(k,n) for k,n in self._nodes.items() \
-            if (n._isinstance(typ) and ((exc is None) or (not n._isinstance(exc))) and (hidden or n.hidden == False))])
+        ret = _NodeDict()
+        for k, n in self._nodes.items():
+            if (n._isinstance(typ) and ((exc is None) or (not n._isinstance(exc))) and (hidden or n.hidden == False)):
+                ret[k] = n
+            if isinstance(n, _NodeDict):
+                ret[k] = n.getNodes(typ,exc,hidden)
+        return ret
 
     @Pyro4.expose
     @property
@@ -525,8 +545,8 @@ class PyroNode(object):
         self._node.call(arg)
 
 
-class _NodeDict(dict):
-    """ A sliceable dict """
+class _NodeDict(odict):
+    """ A sliceable, orderect dict """
     def __getitem__(self, key):
         if isinstance(key, tuple):
             #multi-dimensional slice

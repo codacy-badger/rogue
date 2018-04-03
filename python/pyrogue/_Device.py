@@ -192,9 +192,10 @@ class Device(pr.Node,rim.Hub):
             if node._memBase is None:
                 node._setSlave(self)
 
-    def addRemoteVariables(self, number, stride, pack=False, **kwargs):
+    def addRemoteVariables(self, name, offset, number=None, stride=None, dims=None, strides=None, pack=False, **kwargs):
         hidden = pack or kwargs.pop('hidden', False)
-        self.addNodes(pr.RemoteVariable, number, stride, hidden=hidden, **kwargs)
+ 
+        self.addNodes(pr.RemoteVariable, name, offset, number, stride, dims, strides, hidden=hidden, **kwargs)
 
         # If pack specified, create a linked variable to combine everything
         if pack:
@@ -220,6 +221,9 @@ class Device(pr.Node,rim.Hub):
     def hideVariables(self, hidden, variables=None):
         """Hide a list of Variables (or Variable names)"""
         if variables is None:
+            print(f'hideVariables - {dir(self)}')
+            print()
+            print(self.__dict__)
             variables=self.variables.values()
             
         for v in variables:
