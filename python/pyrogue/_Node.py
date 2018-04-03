@@ -145,20 +145,21 @@ class Node(object):
 
         # Error if added node already has a parent
         if node._parent is not None:
-            raise NodeError('Error adding node with name {node.name} to {self.name}. Node is already attached.')
+            raise NodeError(f'Error adding node with name {node.name} to {self.name}. Node is already attached.')
         
 
+        # Extract node name and indicies (if any)
         name = [s.replace(']', '') for s in node.name.split('[')]
         name = name[0] + [int(x) for x in name[1:]]
 
         d = self._nodes
 
         for i,k in enumerate(name):
-            if not (isinstance(d, dict)):
+            if not (isinstance(d, _NodeDict)):
                 # If we hit somethign that is not a dict, its an object we already placed
                 raise NodeError(f'Error adding node with name {node.name} to {self.name}. Name collision.')
             
-            if isinstance(d, dict) and k not in d:
+            if isinstance(d, _NodeDict) and k not in d:
                 # create a new dict at this level if it doesnt yet exist
                 d[k] = _NodeDict()
 
@@ -166,8 +167,8 @@ class Node(object):
             if i < len(path)-1:
                 d = d[k]
             else:
-                # If we've put an empty list here we can overwrite it with the node
-                if d[k] == []:
+                # If we've put an empty dict here we can overwrite it with the node
+                if len(d[k]) == 0:
                     d[k] = node
                 else:
                     raise NodeError(f'Error adding node with name {node.name} to {self.name}. Name collision.')
