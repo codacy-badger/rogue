@@ -24,10 +24,12 @@
 #include <rogue/interfaces/stream/Master.h>
 #include <rogue/interfaces/stream/Slave.h>
 #include <rogue/interfaces/stream/Frame.h>
+#include <rogue/interfaces/stream/FrameLock.h>
 #include <rogue/interfaces/stream/FrameIterator.h>
 #include <rogue/interfaces/stream/Buffer.h>
 #include <rogue/interfaces/stream/Fifo.h>
 #include <rogue/Logging.h>
+#include <rogue/GilRelease.h>
 #include <sys/syscall.h>
 
 namespace bp = boost::python;
@@ -69,6 +71,9 @@ void ris::Fifo::acceptFrame ( ris::FramePtr frame ) {
    // FIFO is full, drop frame
    if ( queue_.busy()  ) return;
 
+   rogue::GilRelease noGil;
+   ris::FrameLockPtr lock = frame->lock();
+
    // Get size, adjust if trim is enabled
    size = frame->getPayload();
    if ( trimSize_ != 0 && trimSize_ < size ) size = trimSize_;
@@ -77,7 +82,7 @@ void ris::Fifo::acceptFrame ( ris::FramePtr frame ) {
    nFrame = reqFrame(size,true);
 
    // Copy the frame
-   std::copy(frame->begin(), frame->begin()+size, nFrame->begin());
+   std::copy(frame->beginRead(), frame->beginRead()+size, nFrame->beginWrite());
    nFrame->setPayload(size);
 
    // Append to buffer

@@ -159,6 +159,8 @@ class Device(pr.Node,rim.Hub):
             args = getattr(cmd, 'PyrogueCommandArgs')
             if 'name' not in args:
                 args['name'] = cmd.__name__
+
+            print("Adding command {} using depcreated decorator. Please use __init__ decorators instead!".format(args['name']))
             self.add(pr.LocalCommand(function=cmd, **args))
 
     @Pyro4.expose
@@ -359,6 +361,7 @@ class Device(pr.Node,rim.Hub):
     def _rawWrite(self, offset, data, base=pr.UInt, stride=4, wordBitSize=32, tryCount=1):
         with self._memLock:
             for _ in range(tryCount):
+                self._setError(0)
                 self._rawTxnChunker(offset, data, base, stride, wordBitSize, txnType=rim.Write)
                 self._waitTransaction(0)
 
@@ -370,14 +373,15 @@ class Device(pr.Node,rim.Hub):
     def _rawRead(self, offset, numWords=1, base=pr.UInt, stride=4, wordBitSize=32, data=None, tryCount=1):
         with self._memLock:
             for _ in range(tryCount):
+                self._setError(0)
                 ldata = self._rawTxnChunker(offset, data, base, stride, wordBitSize, txnType=rim.Read, numWords=numWords)
                 self._waitTransaction(0)
 
                 if self._getError() == 0:
                     if numWords == 1:
-                        return base.fromBytes(base.mask(ldata, wordBitSize))
+                        return base.fromBytes(base.mask(ldata, wordBitSize),wordBitSize)
                     else:
-                        return [base.fromBytes(base.mask(ldata[i:i+stride], wordBitSize)) for i in range(0, len(ldata), stride)]
+                        return [base.fromBytes(base.mask(ldata[i:i+stride], wordBitSize),wordBitSize) for i in range(0, len(ldata), stride)]
                 
             # If we get here an error has occured
             raise pr.MemoryError (name=self.name, address=offset|self.address, error=self._getError())

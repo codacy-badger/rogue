@@ -18,6 +18,7 @@
  * ----------------------------------------------------------------------------
 **/
 #include <rogue/interfaces/stream/Frame.h>
+#include <rogue/interfaces/stream/FrameLock.h>
 #include <rogue/interfaces/stream/Buffer.h>
 #include <rogue/protocols/packetizer/ControllerV1.h>
 #include <rogue/protocols/packetizer/Transport.h>
@@ -62,6 +63,7 @@ void rpp::ControllerV1::transportRx( ris::FramePtr frame ) {
       log_->warning("Empty frame received At Transport");
 
    rogue::GilRelease noGil;
+   ris::FrameLockPtr flock = frame->lock();
    boost::lock_guard<boost::mutex> lock(tranMtx_);
 
    buff = *(frame->beginBuffer());
@@ -119,16 +121,17 @@ void rpp::ControllerV1::transportRx( ris::FramePtr frame ) {
       if ( tmpEof ) flags += tmpLuser << 8;
       flags += tmpId   << 16;
       flags += tmpDest << 24;
-      frame->setFlags(flags);
+      tranFrame_[0]->setFlags(flags);
    }
 
    tranFrame_[0]->appendBuffer(buff);
+   frame->clear(); // Empty old frame
 
    // Last of transfer
    if ( tmpEof ) {
-      flags = frame->getFlags() & 0xFFFF00FF;
+      flags = tranFrame_[0]->getFlags() & 0xFFFF00FF;
       flags += tmpLuser << 8;
-      frame->setFlags(flags);
+      tranFrame_[0]->setFlags(flags);
 
       tranCount_[0] = 0;
       if ( app_[tranDest_] ) {
@@ -167,6 +170,7 @@ void rpp::ControllerV1::applicationRx ( ris::FramePtr frame, uint8_t tDest ) {
    if ( frame->getError() ) return;
 
    rogue::GilRelease noGil;
+   ris::FrameLockPtr flock = frame->lock();
    boost::lock_guard<boost::mutex> lock(appMtx_);
 
    // Wait while queue is busy
@@ -217,5 +221,6 @@ void rpp::ControllerV1::applicationRx ( ris::FramePtr frame, uint8_t tDest ) {
       segment++;
    }
    appIndex_++;
+   frame->clear(); // Empty old frame
 }
 

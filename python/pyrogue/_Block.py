@@ -288,7 +288,7 @@ class RemoteBlock(BaseBlock, rim.Master):
 
             # Access is fully byte aligned
             if len(var.bitOffset) == 1 and (var.bitOffset[0] % 8) == 0 and (var.bitSize[0] % 8) == 0:
-                return var._base.fromBytes(self._bData[int(var.bitOffset[0]/8):int((var.bitOffset[0]+var.bitSize[0])/8)])
+                return var._base.fromBytes(self._bData[int(var.bitOffset[0]/8):int((var.bitOffset[0]+var.bitSize[0])/8)],sum(var.bitSize))
 
             # Bit level access
             else:
@@ -300,7 +300,7 @@ class RemoteBlock(BaseBlock, rim.Master):
                         setBitToBytes(ba,bit,getBitFromBytes(self._bData,var.bitOffset[x]+y))
                         bit += 1
 
-                return var._base.fromBytes(ba)
+                return var._base.fromBytes(ba,sum(var.bitSize))
 
     def startTransaction(self, type, check=False):
         """
@@ -437,8 +437,13 @@ class RemoteBlock(BaseBlock, rim.Master):
             for x in range(0, len(var.bitOffset)):
                 for y in range(0, var.bitSize[x]):
                     if getBitFromBytes(self._varMask,var.bitOffset[x]+y):
-                        msg = f"Detected bit overlap for variable {var.name}"
-                        raise MemoryError(name=self.name, address=self.address, msg=msg)
+
+                        print("\n\n\n------------------------ Variable Overlap Warning !!! --------------------------------")
+                        print(f"Detected bit overlap for variable {var.name} in block {self.name} at address {self.address}")
+                        print("This warning will be replaced with an exception in the next release!!!!!!!!")
+                        #msg = f"Detected bit overlap for variable {var.name}"
+                        #raise MemoryError(name=self.name, address=self.address, msg=msg)
+
                     setBitToBytes(self._varMask,var.bitOffset[x]+y,1)
 
             # Update verify mask

@@ -25,6 +25,7 @@
 #include <rogue/interfaces/stream/Master.h>
 #include <rogue/interfaces/stream/Buffer.h>
 #include <rogue/interfaces/stream/Frame.h>
+#include <rogue/interfaces/stream/FrameLock.h>
 #include <rogue/interfaces/stream/FrameIterator.h>
 #include <rogue/GeneralError.h>
 #include <boost/make_shared.hpp>
@@ -64,6 +65,9 @@ void ris::Slave::acceptFrame ( ris::FramePtr frame ) {
    uint32_t count;
    uint8_t  val;
 
+   rogue::GilRelease noGil;
+   ris::FrameLockPtr lock = frame->lock();
+
    frameCount_++;
    frameBytes_ += frame->getPayload();
 
@@ -74,7 +78,7 @@ void ris::Slave::acceptFrame ( ris::FramePtr frame ) {
       sprintf(buffer,"     ");
 
       count = 0;
-      for (it = frame->begin(); (count < debug_) && (it != frame->end()); ++it) {
+      for (it = frame->beginRead(); (count < debug_) && (it != frame->endRead()); ++it) {
          count++;
          val = *it;
 
