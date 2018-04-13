@@ -8,12 +8,12 @@
  * Description:
  * Class for interfacing to AxiStreamDma Driver.
  * ----------------------------------------------------------------------------
- * This file is part of the rogue software platform. It is subject to 
- * the license terms in the LICENSE.txt file found in the top-level directory 
- * of this distribution and at: 
- *    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html. 
- * No part of the rogue software platform, including this file, may be 
- * copied, modified, propagated, or distributed except according to the terms 
+ * This file is part of the rogue software platform. It is subject to
+ * the license terms in the LICENSE.txt file found in the top-level directory
+ * of this distribution and at:
+ *    https://confluence.slac.stanford.edu/display/ppareg/LICENSE.html.
+ * No part of the rogue software platform, including this file, may be
+ * copied, modified, propagated, or distributed except according to the terms
  * contained in the LICENSE.txt file.
  * ----------------------------------------------------------------------------
 **/
@@ -97,10 +97,8 @@ void rha::AxiStreamDma::dmaAck() {
 
 //! Generate a buffer. Called from master
 ris::FramePtr rha::AxiStreamDma::acceptReq ( uint32_t size, bool zeroCopyEn) {
-   int32_t          res;
    fd_set           fds;
    struct timeval   tout;
-   uint32_t         alloc;
    ris::BufferPtr   buff;
    ris::FramePtr    frame;
    uint32_t         buffSize;
@@ -116,6 +114,7 @@ ris::FramePtr rha::AxiStreamDma::acceptReq ( uint32_t size, bool zeroCopyEn) {
 
    // Allocate zero copy buffers from driver
    else {
+      uint32_t          alloc;
       rogue::GilRelease noGil;
 
       // Create empty frame
@@ -125,8 +124,9 @@ ris::FramePtr rha::AxiStreamDma::acceptReq ( uint32_t size, bool zeroCopyEn) {
       // Request may be serviced with multiple buffers
       while ( alloc < size ) {
 
-         // Keep trying since select call can fire 
+         // Keep trying since select call can fire
          // but getIndex fails because we did not win the buffer lock
+         int32_t res;
          do {
 
             // Setup fds for select call
@@ -163,7 +163,6 @@ void rha::AxiStreamDma::acceptFrame ( ris::FramePtr frame ) {
    int32_t          res;
    fd_set           fds;
    struct timeval   tout;
-   uint32_t         meta;
    uint32_t         flags;
    uint32_t         fuser;
    uint32_t         luser;
@@ -202,7 +201,7 @@ void rha::AxiStreamDma::acceptFrame ( ris::FramePtr frame ) {
       }
 
       // Get (*it)er meta field
-      meta = (*it)->getMeta();
+      uint32_t meta = (*it)->getMeta();
 
       // Meta is zero copy as indicated by bit 31
       if ( (meta & 0x80000000) != 0 ) {
@@ -225,7 +224,7 @@ void rha::AxiStreamDma::acceptFrame ( ris::FramePtr frame ) {
       // Write to pgp with (*it)er copy in driver
       else {
 
-         // Keep trying since select call can fire 
+         // Keep trying since select call can fire
          // but write fails because we did not win the (*it)er lock
          do {
 
@@ -283,11 +282,9 @@ void rha::AxiStreamDma::runThread() {
    ris::FramePtr  frame;
    fd_set         fds;
    int32_t        res;
-   uint32_t       error;
    uint32_t       meta;
    uint32_t       fuser;
    uint32_t       luser;
-   uint32_t       flags;
    uint32_t       cont;
    uint32_t       rxFlags;
    uint32_t       rxError;
@@ -342,14 +339,14 @@ void rha::AxiStreamDma::runThread() {
             }
 
             // Return of -1 is bad
-            if ( res < 0 ) 
+            if ( res < 0 )
                throw(rogue::GeneralError("AxiStreamDma::runThread","DMA Interface Failure!"));
 
             // Read was successfull
             if ( res > 0 ) {
                buff->setPayload(res);
-               flags = frame->getFlags();
-               error = frame->getError();
+               uint32_t flags = frame->getFlags();
+               uint32_t error = frame->getError();
 
                // Receive error
                error |= rxError;
