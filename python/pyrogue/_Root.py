@@ -34,10 +34,13 @@ class RootLogHandler(logging.Handler):
 
     def emit(self,record):
         with self._root.updateGroup():
-            with self._root._sysLogLock:
-                val = self._root.SystemLog.value()
-                val += (self.format(record).splitlines()[0] + '\n')
-                self._root.SystemLog.set(val)
+           try:
+               val = (self.format(record).splitlines()[0] + '\n')
+               self._root.SystemLog += val
+           except e:
+               print("-----------Error Logging Exception -------------")
+               print(e)
+               print("------------------------------------------------")
 
 class Root(rogue.interfaces.stream.Master,pr.Device):
     """
@@ -56,7 +59,7 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
         """Root exit."""
         self.stop()
 
-    def __init__(self, *, name, description):
+    def __init__(self, *, name=None, description=''):
         """Init the node with passed attributes"""
 
         rogue.interfaces.stream.Master.__init__(self)
@@ -68,9 +71,6 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
         handler.setFormatter(formatter)
         self._logger = logging.getLogger('pyrogue')
         self._logger.addHandler(handler)
-
-        # Keep of list of errors, exposed as a variable
-        self._sysLogLock = threading.Lock()
 
         # Running status
         self._running = False
@@ -126,7 +126,7 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
                                  description='Clear the message log cntained in the SystemLog variable'))
 
 
-    def start(self, initRead=False, initWrite=False, pollEn=True, pyroGroup=None, pyroHost=None, pyroNs=None):
+    def start(self, timeout=1.0, initRead=False, initWrite=False, pollEn=True, pyroGroup=None, pyroAddr=None, pyroNsAddr=None):
         """Setup the tree. Start the polling thread."""
 
         # Create poll queue object
@@ -147,30 +147,20 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
 
         for i in range(1,len(tmpDevs)):
             if (tmpDevs[i].size != 0) and (tmpDevs[i].memBaseId == tmpDevs[i-1].memBaseId) and \
-                (tmpDevs[i].address <= (tmpDevs[i-1].address + tmpDevs[i-1].size)):
+                (tmpDevs[i].address < (tmpDevs[i-1].address + tmpDevs[i-1].size)):
 
                 print("\n\n\n------------------------ Device Overlap Warning !!! --------------------------------")
-                print("Device {} at address={} overlaps {} at address={} with size={}".format(
+                print("Device {} at address={:#x} overlaps {} at address={:#x} with size={}".format(
                       tmpDevs[i].path,tmpDevs[i].address,tmpDevs[i-1].path,tmpDevs[i-1].address,tmpDevs[i-1].size))
                 print("This warning will be replaced with an exception in the next release!!!!!!!!")
 
                 #raise pr.NodeError("Device {} at address={} overlaps {} at address={} with size={}".format(
                 #    tmpDevs[i].path,tmpDevs[i].address,tmpDevs[i-1].path,tmpDevs[i-1].address,tmpDevs[i-1].size))
 
-        # Get list of deprecated nodes
-        lst = self._getDepWarn()
-
-        cnt=len(lst)
-        if cnt > 0:
-            print("----------- Deprecation Warning --------------------------------")
-            print("The following nodes were created with deprecated calls:")
-            if cnt > 50:
-                print("   (Only showing 50 out of {} total deprecated nodes)".format(cnt))
-
-            for n in lst[:50]:
-                print("   " + n)
-
-            print("----------------------------------------------------------------")
+        # Set timeout if not default
+        if timeout != 1.0:
+            for key,value in self._nodes.items():
+                value._setTimeout(timeout)
 
         # Start pyro server if enabled
         if pyroGroup is not None:
@@ -180,22 +170,22 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
 
             Pyro4.util.SerializerBase.register_dict_to_class("collections.OrderedDict", recreate_OrderedDict)
 
-            self._pyroDaemon = Pyro4.Daemon(host=pyroHost)
+            self._pyroDaemon = Pyro4.Daemon(host=pyroAddr)
 
             uri = self._pyroDaemon.register(self)
 
             # Do we create our own nameserver?
             try:
-                if pyroNs is None:
-                    nsUri, nsDaemon, nsBcast = Pyro4.naming.startNS(host=pyroHost)
+                if pyroNsAddr is None:
+                    nsUri, nsDaemon, nsBcast = Pyro4.naming.startNS(host=pyroAddr)
                     self._pyroDaemon.combine(nsDaemon)
                     if nsBcast is not None:
                         self._pyroDaemon.combine(nsBcast)
                     ns = nsDaemon.nameserver
                     self._log.info("Started pyro4 nameserver: {}".format(nsUri))
                 else:
-                    ns = Pyro4.locateNS(pyroNs)
-                    self._log.info("Using pyro4 nameserver at host: {}".format(pyroNs))
+                    ns = Pyro4.locateNS(pyroNsAddr)
+                    self._log.info("Using pyro4 nameserver at addr: {}".format(pyroNsAddr))
 
                 ns.register('{}.{}'.format(pyroGroup,self.name),uri)
                 self._exportNodes(self._pyroDaemon)
@@ -283,7 +273,7 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
 
         return ret
 
-    def setYaml(self,yml,writeEach,modes=['RW']):
+    def setYaml(self,yml,writeEach,modes=['RW','WO']):
         """
         Set variable values or execute commands from a dictionary.
         modes is a list of variable modes to act on.
@@ -356,19 +346,12 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
             # After with is done
             self._updateQueue.put(False)
 
-    def setTimeout(self,timeout):
-        """
-        Set timeout value on all devices & blocks
-        """
-        for key,value in self._nodes.items():
-            value._setTimeout(timeout)
-
     def _sendYamlFrame(self,yml):
         """
         Generate a frame containing the passed string.
         """
-        frame = self._reqFrame(len(yml),True)
         b = bytearray(yml,'utf-8')
+        frame = self._reqFrame(len(b),True)
         frame.write(b,0)
         self._sendFrame(frame)
 
@@ -419,7 +402,7 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
         """Read YAML configuration from a file. Called from command"""
         try:
             with open(arg,'r') as f:
-                self.setYaml(f.read(),False,['RW'])
+                self.setYaml(f.read(),False,['RW','WO'])
         except Exception as e:
             self._log.exception(e)
 
@@ -438,9 +421,7 @@ class Root(rogue.interfaces.stream.Master,pr.Device):
 
     def _clearLog(self):
         """Clear the system log"""
-        with self.updateGroup():
-            with self._sysLogLock:
-                self.SystemLog.set('')
+        self.SystemLog.set('')
 
     def _queueUpdates(self,var):
         self._updateQueue.put(var)
@@ -545,7 +526,7 @@ class PyroRoot(pr.PyroNode):
                 f.varListener(path=path, value=value, disp=disp)
 
 class PyroClient(object):
-    def __init__(self, group, host=None, ns=None):
+    def __init__(self, group, localAddr=None, nsAddr=None):
         self._group = group
 
         Pyro4.config.THREADPOOL_SIZE = 100
@@ -554,12 +535,15 @@ class PyroClient(object):
 
         Pyro4.util.SerializerBase.register_dict_to_class("collections.OrderedDict", recreate_OrderedDict)
 
+        if nsAddr is None:
+            nsAddr = localAddr
+
         try:
-            self._ns = Pyro4.locateNS(host=ns)
+            self._ns = Pyro4.locateNS(host=nsAddr)
         except:
             raise pr.NodeError("PyroClient Failed to find nameserver")
 
-        self._pyroDaemon = Pyro4.Daemon(host=host)
+        self._pyroDaemon = Pyro4.Daemon(host=localAddr)
 
         self._pyroThread = threading.Thread(target=self._pyroDaemon.requestLoop)
         self._pyroThread.start()

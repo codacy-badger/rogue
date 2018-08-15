@@ -24,9 +24,9 @@
 #include <rogue/interfaces/stream/Master.h>
 #include <rogue/interfaces/stream/Slave.h>
 #include <PgpDriver.h>
-#include <boost/python.hpp>
 #include <boost/thread.hpp>
 #include <stdint.h>
+#include <boost/shared_ptr.hpp>
 
 
 namespace rogue {
@@ -59,7 +59,7 @@ namespace rogue {
                uint32_t bSize_;
 
                //! Timeout for frame transmits
-               uint32_t timeout_;
+               struct timeval timeout_;
 
                //! Pointer to zero copy buffers
                void  ** rawBuff_;

@@ -23,7 +23,6 @@
 #include <rogue/interfaces/stream/Master.h>
 #include <rogue/interfaces/stream/Slave.h>
 #include <boost/enable_shared_from_this.hpp>
-#include <boost/python.hpp>
 #include <stdint.h>
 #include <rogue/Queue.h>
 #include <rogue/Logging.h>
@@ -40,15 +39,20 @@ namespace rogue {
          class Controller : public boost::enable_shared_from_this<rogue::protocols::rssi::Controller> {
 
                static const uint8_t  Version       = 1;
-               static const uint8_t  TimeoutUnit   = 3; // 1e-3
-               static const uint8_t  LocMaxBuffers = 32;
-               static const uint16_t ReqRetranTout = 10;
-               static const uint16_t ReqCumAckTout = 5;
-               static const uint16_t ReqNullTout   = 3000;
-               static const uint8_t  ReqMaxRetran  = 15;
-               static const uint8_t  ReqMaxCumAck  = 2;
-               static const uint32_t TryPeriod     = 100;
+               static const uint8_t  TimeoutUnit   = 3; // rssiTime * std::pow(10,-TimeoutUnit) = 3 = ms
+               
+               static const uint8_t  LocMaxBuffers = 32; // MAX_NUM_OUTS_SEG_G in FW
                static const uint32_t BusyThold     = 16;
+               
+               // RSSI Timeouts (units of TimeoutUnit)
+               static const uint32_t TryPeriod     = 100;
+               static const uint16_t ReqCumAckTout = 5;    // ACK_TOUT_G in FW
+               static const uint16_t ReqRetranTout = 10;   // RETRANS_TOUT_G in FW
+               static const uint16_t ReqNullTout   = 3000; // NULL_TOUT_G in FW
+               
+               // Counters
+               static const uint8_t  ReqMaxRetran  = 15;   // MAX_RETRANS_CNT_G in FW
+               static const uint8_t  ReqMaxCumAck  = 2;    // MAX_CUM_ACK_CNT_G in FW
 
                //! Connection states
                enum States : uint32_t { StClosed     = 0,
@@ -71,10 +75,14 @@ namespace rogue {
                uint32_t dropCount_;
                uint8_t  nextSeqRx_;
                uint8_t  lastAckRx_;
-               bool     tranBusy_;
+               bool     remBusy_;
+               bool     locBusy_;
 
                // Application queue
                rogue::Queue<boost::shared_ptr<rogue::protocols::rssi::Header>> appQueue_;
+               
+               // Sequence Out of Order ("OOO") queue
+               std::map<uint8_t, boost::shared_ptr<rogue::protocols::rssi::Header>> oooQueue_;
 
                // State queue
                rogue::Queue<boost::shared_ptr<rogue::protocols::rssi::Header>> stQueue_;
@@ -87,7 +95,6 @@ namespace rogue {
                boost::mutex stMtx_;
                uint32_t state_;
                struct timeval stTime_;
-               uint8_t prevAckRx_;
                uint32_t downCount_;
                uint32_t retranCount_;
 
@@ -110,12 +117,23 @@ namespace rogue {
                uint8_t  maxCumAck_;
                uint32_t remConnId_;
                uint32_t segmentSize_;
+               uint32_t locBusyCnt_;
+               uint32_t remBusyCnt_;
+
+               // Time values
+               struct timeval retranToutD1_;  // retranTout_ / 1
+               struct timeval tryPeriodD1_;   // TryPeriod   / 1
+               struct timeval tryPeriodD4_;   // TryPeriod   / 4
+               struct timeval cumAckToutD1_;  // cumAckTout_ / 1 
+               struct timeval cumAckToutD2_;  // cumAckTout_ / 2 
+               struct timeval nullToutD3_;    // nullTout_   / 3 
+               struct timeval zeroTme_;       // 0
 
                // State thread
                boost::thread* thread_;
 
                // Application frame transmit timeout
-               uint32_t timeout_;
+               struct timeval timeout_;
 
             public:
 
@@ -124,9 +142,6 @@ namespace rogue {
                   create ( uint32_t segSize,
                            boost::shared_ptr<rogue::protocols::rssi::Transport> tran,
                            boost::shared_ptr<rogue::protocols::rssi::Application> app, bool server );
-
-               //! Setup class in python
-               static void setup_python();
 
                //! Creator
                Controller( uint32_t segSize,
@@ -159,9 +174,42 @@ namespace rogue {
 
                //! Get Retran Count
                uint32_t getRetranCount();
+               
+               //! Get locBusy
+               bool getLocBusy();
 
-               //! Get busy
-               bool getBusy();
+               //! Get locBusyCnt
+               uint32_t getLocBusyCnt();
+
+               //! Get remBusy
+               bool getRemBusy();
+
+               //! Get remBusyCnt
+               uint32_t getRemBusyCnt();
+               
+               //! Get maxRetran
+               uint32_t getMaxRetran();
+               
+               //! Get remMaxBuffers
+               uint32_t getRemMaxBuffers();           
+
+               //! Get remMaxSegment
+               uint32_t getRemMaxSegment();    
+
+               //! Get retranTout
+               uint32_t getRetranTout();
+
+               //! Get cumAckTout
+               uint32_t getCumAckTout();               
+               
+               //! Get nullTout
+               uint32_t getNullTout();
+               
+               //! Get maxCumAck
+               uint32_t getMaxCumAck();
+
+               //! Get segmentSize
+               uint32_t getSegmentSize();
 
                //! Set timeout in microseconds for frame transmits
                void setTimeout(uint32_t timeout);
@@ -172,35 +220,38 @@ namespace rogue {
             private:
 
                // Method to transit a frame with proper updates
-               void transportTx(boost::shared_ptr<rogue::protocols::rssi::Header> head, bool seqUpdate, bool retransmit);
+               void transportTx(boost::shared_ptr<rogue::protocols::rssi::Header> head, bool seqUpdate, bool txReset);
 
-               //! Convert rssi time to microseconds
-               uint32_t convTime ( uint32_t rssiTime );
+               // Method to retransmit a frame
+               int8_t retransmit(uint8_t id);
+
+               //! Convert rssi time to time structure
+               static void convTime ( struct timeval &tme, uint32_t rssiTime );
 
                //! Helper function to determine if time has elapsed in current state
-               bool timePassed ( struct timeval *lastTime, uint32_t time, bool rawTime=false);
+               static bool timePassed ( struct timeval &lastTime, struct timeval &tme);
 
                //! Thread background
                void runThread();
 
                //! Closed/Waiting for Syn
-               uint32_t stateClosedWait ();
+               struct timeval & stateClosedWait ();
 
                //! Send syn ack
-               uint32_t stateSendSynAck ();
+               struct timeval & stateSendSynAck ();
 
                //! Send sequence ack
-               uint32_t stateSendSeqAck ();
+               struct timeval & stateSendSeqAck ();
 
                //! Open state
-               uint32_t stateOpen ();
+               struct timeval & stateOpen ();
 
                //! Error state
-               uint32_t stateError ();
+               struct timeval & stateError ();
 
          };
 
-         // Convienence
+         // Convenience
          typedef boost::shared_ptr<rogue::protocols::rssi::Controller> ControllerPtr;
 
       }

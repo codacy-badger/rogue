@@ -18,7 +18,6 @@
  * ----------------------------------------------------------------------------
 **/
 
-#include <boost/python.hpp>
 #include <rogue/protocols/epicsV3/Variable.h>
 #include <rogue/protocols/epicsV3/Pv.h>
 #include <rogue/protocols/epicsV3/Server.h>
@@ -29,6 +28,8 @@
 #include <boost/make_shared.hpp>
 
 namespace rpe = rogue::protocols::epicsV3;
+
+#include <boost/python.hpp>
 namespace bp  = boost::python;
 
 //! Setup class in python
@@ -52,7 +53,6 @@ rpe::Variable::Variable (std::string epicsName, bp::object p, bool syncRead) : V
    char        tmpType[50];
    uint32_t    count;
 
-   inSet_    = false;
    var_      = bp::object(p);
    syncRead_ = syncRead;
    setAttr_  = "setDisp";
@@ -101,29 +101,21 @@ rpe::Variable::Variable (std::string epicsName, bp::object p, bool syncRead) : V
    // Init value
    if ( isString_ ) fromPython(var_.attr("valueDisp")());
    else fromPython(var_.attr("value")());
-
-   rogue::GilRelease noGil;
-   this->updated();
 }
 
 rpe::Variable::~Variable() { }
 
 void rpe::Variable::varUpdated(std::string path, bp::object value, bp::object disp) {
+   rogue::GilRelease noGil;
 
    log_->debug("Variable update for %s: Disp=%s", epicsName_.c_str(),(char *)bp::extract<char *>(disp));
+   {
+      boost::lock_guard<boost::mutex> lock(mtx_);
+      noGil.acquire();
 
-   if ( inSet_ ) {
-      log_->debug("Ignoring variable update for %s", epicsName_.c_str());
-      return;
+      if (  isString_ ) fromPython(disp);
+      else fromPython(value);
    }
-
-   rogue::GilRelease noGil;
-   boost::lock_guard<boost::mutex> lock(mtx_);
-   noGil.acquire();
-
-   if (  isString_ ) fromPython(disp);
-   else fromPython(value);
-
    noGil.release();
    this->updated();
 }
@@ -135,13 +127,12 @@ void rpe::Variable::valueGet() {
          rogue::ScopedGil gil;
          log_->info("Synchronous read for %s",epicsName_.c_str());
          try {
-            if ( isString_ ) fromPython(var_.attr("valueDisp")());
-            else fromPython(var_.attr("value")());
+            if ( isString_ ) fromPython(var_.attr("disp")());
+            else fromPython(var_.attr("get")());
          } catch (...) {
             log_->error("Error getting values from epics: %s\n",epicsName_.c_str());
          }
       }
-      updated();
    }
 }
 
@@ -283,7 +274,6 @@ void rpe::Variable::valueSet() {
    bp::list pl;
    uint32_t i;
 
-   inSet_ = true;
    log_->info("Variable set for %s",epicsName_.c_str());
 
    try {
@@ -379,6 +369,5 @@ void rpe::Variable::valueSet() {
    } catch (...) {
       log_->error("Error setting value from epics: %s\n",epicsName_.c_str());
    }
-   inSet_ = false;
 }
 

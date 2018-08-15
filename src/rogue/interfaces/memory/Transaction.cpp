@@ -29,7 +29,11 @@
 #include <rogue/ScopedGil.h>
 
 namespace rim = rogue::interfaces::memory;
+
+#ifndef NO_PYTHON
+#include <boost/python.hpp>
 namespace bp  = boost::python;
+#endif
 
 // Init class counter
 uint32_t rim::Transaction::classIdx_ = 0;
@@ -38,12 +42,13 @@ uint32_t rim::Transaction::classIdx_ = 0;
 boost::mutex rim::Transaction::classMtx_;
 
 //! Create a master container
-rim::TransactionPtr rim::Transaction::create () {
-   rim::TransactionPtr m = boost::make_shared<rim::Transaction>();
+rim::TransactionPtr rim::Transaction::create (struct timeval timeout) {
+   rim::TransactionPtr m = boost::make_shared<rim::Transaction>(timeout);
    return(m);
 }
 
 void rim::Transaction::setup_python() {
+#ifndef NO_PYTHON
    bp::class_<rim::Transaction, rim::TransactionPtr, boost::noncopyable>("Transaction",bp::no_init)
       .def("lock",    &rim::Transaction::lock)
       .def("id",      &rim::Transaction::id)
@@ -55,14 +60,15 @@ void rim::Transaction::setup_python() {
       .def("setData", &rim::Transaction::setData)
       .def("getData", &rim::Transaction::getData)
    ;
+#endif
 }
 
 //! Create object
-rim::Transaction::Transaction() {
+rim::Transaction::Transaction(struct timeval timeout) : timeout_(timeout) {
+   gettimeofday(&startTime_,NULL);
+
    endTime_.tv_sec    = 0;
    endTime_.tv_usec   = 0;
-   startTime_.tv_sec  = 0;
-   startTime_.tv_usec = 0;
 
    pyValid_ = false;
 
@@ -90,7 +96,7 @@ rim::TransactionLockPtr rim::Transaction::lock() {
 
 //! Get expired state
 bool rim::Transaction::expired() { 
-   return (iter_ == NULL); 
+   return (iter_ == NULL || done_); 
 }
 
 //! Get id
@@ -134,12 +140,25 @@ uint32_t rim::Transaction::wait() {
    // Reset
    if ( pyValid_ ) {
       rogue::ScopedGil gil;
+#ifndef NO_PYTHON
       PyBuffer_Release(&(pyBuf_));
+#endif
    }
    iter_    = NULL;
    pyValid_ = false;
 
    return (error_);
+}
+
+//! Refresh the timer
+void rim::Transaction::refreshTimer(rim::TransactionPtr ref) {
+   struct timeval currTime;
+   gettimeofday(&currTime,NULL);
+   boost::lock_guard<boost::mutex> lock(lock_);
+
+   // Refresh if start time is later then the reference
+   if ( ref == NULL || timercmp(&startTime_,&(ref->startTime_),>=) )
+      timeradd(&currTime,&timeout_,&endTime_);
 }
 
 //! start iterator, caller must lock around access
@@ -153,6 +172,8 @@ rim::Transaction::iterator rim::Transaction::end() {
    if ( iter_ == NULL ) throw(rogue::GeneralError("Transaction::end","Invalid data"));
    return iter_ + size_;
 }
+
+#ifndef NO_PYTHON
 
 //! Set transaction data from python
 void rim::Transaction::setData ( boost::python::object p, uint32_t offset ) {
@@ -193,4 +214,6 @@ void rim::Transaction::getData ( boost::python::object p, uint32_t offset ) {
    std::copy(begin()+offset,begin()+offset+count,data);
    PyBuffer_Release(&pyBuf);
 }
+
+#endif
 

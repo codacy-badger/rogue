@@ -20,7 +20,6 @@
 #ifndef __ROGUE_LOGGING_H__
 #define __ROGUE_LOGGING_H__
 #include <exception>
-#include <boost/python.hpp>
 #include <stdint.h>
 #include <boost/thread.hpp>
 
@@ -81,6 +80,8 @@ namespace rogue {
          void warning(const char * fmt, ...);
          void info(const char * fmt, ...);
          void debug(const char * fmt, ...);
+
+         void logThreadId(uint32_t level);
 
          static void setup_python();
    };

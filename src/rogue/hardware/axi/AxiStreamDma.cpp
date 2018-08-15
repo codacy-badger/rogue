@@ -24,10 +24,15 @@
 #include <rogue/GeneralError.h>
 #include <boost/make_shared.hpp>
 #include <rogue/GilRelease.h>
+#include <stdlib.h>
 
 namespace rha = rogue::hardware::axi;
 namespace ris = rogue::interfaces::stream;
+
+#ifndef NO_PYTHON
+#include <boost/python.hpp>
 namespace bp  = boost::python;
+#endif
 
 //! Class creation
 rha::AxiStreamDmaPtr rha::AxiStreamDma::create (std::string path, uint32_t dest, bool ssiEnable) {
@@ -39,9 +44,10 @@ rha::AxiStreamDmaPtr rha::AxiStreamDma::create (std::string path, uint32_t dest,
 rha::AxiStreamDma::AxiStreamDma ( std::string path, uint32_t dest, bool ssiEnable) {
    uint8_t mask[DMA_MASK_SIZE];
 
-   timeout_ = 1000000;
    dest_    = dest;
    enSsi_   = ssiEnable;
+
+   rogue::defaultTimeout(timeout_);
 
    log_ = rogue::Logging::create("axi.AxiStreamDma");
 
@@ -82,7 +88,11 @@ rha::AxiStreamDma::~AxiStreamDma() {
 
 //! Set timeout for frame transmits in microseconds
 void rha::AxiStreamDma::setTimeout(uint32_t timeout) {
-   timeout_ = timeout;
+   if ( timeout > 0 ) {
+      div_t divResult = div(timeout,1000000);
+      timeout_.tv_sec  = divResult.quot;
+      timeout_.tv_usec = divResult.rem;
+   }
 }
 
 //! Set driver debug level
@@ -134,11 +144,10 @@ ris::FramePtr rha::AxiStreamDma::acceptReq ( uint32_t size, bool zeroCopyEn) {
             FD_SET(fd_,&fds);
 
             // Setup select timeout
-            tout.tv_sec=(timeout_>0)?(timeout_ / 1000000):0;
-            tout.tv_usec=(timeout_>0)?(timeout_ % 1000000):10000;
+            tout = timeout_;
 
             if ( select(fd_+1,NULL,&fds,NULL,&tout) <= 0 ) {
-               if ( timeout_ > 0 ) throw(rogue::GeneralError::timeout("AxiStreamDma::acceptReq",timeout_));
+               throw(rogue::GeneralError::timeout("AxiStreamDma::acceptReq",timeout_));
                res = 0;
             }
             else {
@@ -234,11 +243,10 @@ void rha::AxiStreamDma::acceptFrame ( ris::FramePtr frame ) {
             FD_SET(fd_,&fds);
 
             // Setup select timeout
-            tout.tv_sec=(timeout_ > 0)?(timeout_ / 1000000):0;
-            tout.tv_usec=(timeout_ > 0)?(timeout_ % 1000000):10000;
-
+            tout = timeout_;
+            
             if ( select(fd_+1,NULL,&fds,NULL,&tout) <= 0 ) {
-               if ( timeout_ > 0) throw(rogue::GeneralError("AxiStreamDma::acceptFrame","AXIS Write Call Failed. Buffer Not Available!!!!"));
+               throw(rogue::GeneralError("AxiStreamDma::acceptFrame","AXIS Write Call Failed. Buffer Not Available!!!!"));
                res = 0;
             }
             else {
@@ -381,6 +389,7 @@ void rha::AxiStreamDma::runThread() {
 }
 
 void rha::AxiStreamDma::setup_python () {
+#ifndef NO_PYTHON
 
    bp::class_<rha::AxiStreamDma, rha::AxiStreamDmaPtr, bp::bases<ris::Master,ris::Slave>, boost::noncopyable >("AxiStreamDma",bp::init<std::string,uint32_t,bool>())
       .def("setDriverDebug", &rha::AxiStreamDma::setDriverDebug)
@@ -390,5 +399,6 @@ void rha::AxiStreamDma::setup_python () {
 
    bp::implicitly_convertible<rha::AxiStreamDmaPtr, ris::MasterPtr>();
    bp::implicitly_convertible<rha::AxiStreamDmaPtr, ris::SlavePtr>();
+#endif
 }
 

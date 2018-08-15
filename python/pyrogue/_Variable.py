@@ -85,10 +85,6 @@ class BaseVariable(pr.Node):
         if self._enum is not None:
             self._revEnum = {v:k for k,v in self._enum.items()}
 
-        # Legacy SL and CMD become RW
-        if self._mode == 'SL': self._mode = 'RW'
-        if self._mode == 'CMD' : self._mode = 'RW'
-
         # Check modes
         if (self._mode != 'RW') and (self._mode != 'RO') and \
            (self._mode != 'WO'):
@@ -178,7 +174,7 @@ class BaseVariable(pr.Node):
                 self._block.set(self, value)
 
                 if write:
-                    self._parent.writeBlocks(force=False, recurse=False, variable=self)
+                    self._parent.writeBlocks(force=True, recurse=False, variable=self)
                     self._parent.verifyBlocks(recurse=False, variable=self)
                     self._parent.checkBlocks(recurse=False, variable=self)
 
@@ -255,25 +251,28 @@ class BaseVariable(pr.Node):
 
     @Pyro4.expose
     def parseDisp(self, sValue):
-        if sValue is None or isinstance(sValue, self.nativeType()):
-            return sValue
-        else:        
-            if sValue is '':
-                return ''
-            elif self.disp == 'enum':
-                return self.revEnum[sValue]
-            else:
-                t = self.nativeType()
-                if t == int:
-                    return int(sValue, 0)
-                elif t == float:
-                    return float(sValue)
-                elif t == bool:
-                    return str.lower(sValue) == "true"
-                elif t == list or t == dict:
-                    return eval(sValue)
+        try:
+            if sValue is None or isinstance(sValue, self.nativeType()):
+                return sValue
+            else:        
+                if sValue is '':
+                    return ''
+                elif self.disp == 'enum':
+                    return self.revEnum[sValue]
                 else:
-                    return sValue
+                    t = self.nativeType()
+                    if t == int:
+                        return int(sValue, 0)
+                    elif t == float:
+                        return float(sValue)
+                    elif t == bool:
+                        return str.lower(sValue) == "true"
+                    elif t == list or t == dict:
+                        return eval(sValue)
+                    else:
+                        return sValue
+        except:
+            raise VariableError("Invalid value {} for variable {} with type {}".format(sValue,self.name,self.nativeType()))
 
     @Pyro4.expose
     def setDisp(self, sValue, write=True):
@@ -295,13 +294,6 @@ class BaseVariable(pr.Node):
     def _finishInit(self):
         self._setDefault()
         self._updatePollInterval()
-
-
-    #def __set__(self, value):
-        #self.set(value, write=True)
-
-    #def __get__(self):
-        #self.get(read=True)
 
     def _setDict(self,d,writeEach,modes):
         if self._mode in modes:
@@ -351,6 +343,7 @@ class RemoteVariable(BaseVariable):
                  bitSize=32,
                  bitOffset=0,
                  pollInterval=0, 
+                 overlapEn=False,
                  verify=True, ):
 
         if disp is None:
@@ -387,6 +380,7 @@ class RemoteVariable(BaseVariable):
         self._verify    = verify
         self._typeStr   = base.name(sum(bitSize))
         self._bytes     = int(math.ceil(float(self._bitOffset[-1] + self._bitSize[-1]) / 8.0))
+        self._overlapEn = overlapEn
 
 
     @property
@@ -479,6 +473,58 @@ class LocalVariable(BaseVariable):
     def __get__(self):
         return self.get(read=False)
 
+    def __iadd__(self, other):
+        self._block._iadd(other)
+        return self
+
+    def __isub__(self, other):
+        self._block._isub(other)
+        return self
+
+    def __imul__(self, other):
+        self._block._imul(other)
+        return self
+
+    def __imatmul__(self, other):
+        self._block._imatmul(other)
+        return self
+
+    def __itruediv__(self, other):
+        self._block._itruediv(other)
+        return self
+
+    def __ifloordiv__(self, other):
+        self._block._ifloordiv(other)
+        return self
+
+    def __imod__(self, other):
+        self._block._imod(other)
+        return self
+
+    def __ipow__(self, other):
+        self._block._ipow(other)
+        return self
+
+    def __ilshift__(self, other):
+        self._block._ilshift(other)
+        return self
+
+    def __irshift__(self, other):
+        self._block._irshift(other)
+        return self
+
+    def __iand__(self, other):
+        self._block._iand(other)
+        return self
+
+    def __ixor__(self, other):
+        self._block._ixor(other)
+        return self
+
+    def __ior__(self, other):
+        self._block._ior(other)
+        return self
+
 @Pyro4.expose
 class LinkVariable(BaseVariable):
 
@@ -546,63 +592,6 @@ class LinkVariable(BaseVariable):
             return varFuncHelper(self._linkedGet,pargs,self._log,self.path)
         else:
             return None
-
-
-# Legacy Support
-def Variable(local=False, setFunction=None, getFunction=None, **kwargs):
-        
-    # Local Variables override get and set functions
-    if local or setFunction is not None or getFunction is not None:
-
-        # Get list of possible class args
-        cargs = inspect.getfullargspec(LocalVariable.__init__).args + \
-                inspect.getfullargspec(LocalVariable.__init__).kwonlyargs
-
-        # Pass supported args
-        args = {k:kwargs[k] for k in kwargs if k in cargs}
-
-        ret = LocalVariable(localSet=setFunction, localGet=getFunction, **args)
-        ret._depWarn = True
-        return(ret)
-
-    # Otherwise assume remote
-    else:
-        if 'base' not in kwargs:
-            kwargs['base'] = pr.UInt
-            
-        base = kwargs['base']
-
-        if isinstance(base, str):
-            if base == 'hex' or base == 'uint' or base == 'bin' or base == 'enum' or base == 'range':
-                kwargs['base'] = pr.UInt
-            elif base == 'int':
-                kwargs['base'] = pr.Int
-            elif base == 'bool':
-                kwargs['base'] = pr.Bool
-            elif base == 'string':
-                kwargs['base'] = pr.String
-            elif base == 'float':
-                kwargs['base'] = pr.Float
-
-
-        if 'disp' not in kwargs and isinstance(base, str):
-            if base == 'uint':
-                kwargs['disp'] = '{:d}'
-            elif base == 'bin':
-                kwargs['disp'] = '{:#b}'
-#             else:
-#                 kwargs['disp'] = kwargs['base'].defaultdisp     # or None?       
-
-        # Get list of possible class args
-        cargs = inspect.getfullargspec(RemoteVariable.__init__).args + \
-                inspect.getfullargspec(RemoteVariable.__init__).kwonlyargs
-
-        # Pass supported args
-        args = {k:kwargs[k] for k in kwargs if k in cargs}
-
-        ret = RemoteVariable(**args)
-        ret._depWarn = True
-        return(ret)
 
 
 # Function helper

@@ -29,7 +29,6 @@
 
 namespace rpr = rogue::protocols::rssi;
 namespace ris = rogue::interfaces::stream;
-namespace bp  = boost::python;
 
 //! Set 16-bit uint value
 void rpr::Header::setUInt16 ( uint8_t *data, uint8_t byte, uint16_t value) {
@@ -68,10 +67,6 @@ uint16_t rpr::Header::compSum (uint8_t *data, uint8_t size) {
 rpr::HeaderPtr rpr::Header::create(ris::FramePtr frame) {
    rpr::HeaderPtr r = boost::make_shared<rpr::Header>(frame);
    return(r);
-}
-
-void rpr::Header::setup_python() {
-   // Nothing to do
 }
 
 //! Creator
@@ -202,8 +197,8 @@ void rpr::Header::update() {
 }
 
 //! Get time
-struct timeval * rpr::Header::getTime() {
-   return(&time_);
+struct timeval & rpr::Header::getTime() {
+   return(time_);
 }
 
 //! Get Count

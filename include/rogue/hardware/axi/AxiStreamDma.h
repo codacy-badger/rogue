@@ -21,7 +21,6 @@
 #include <rogue/interfaces/stream/Master.h>
 #include <rogue/interfaces/stream/Slave.h>
 #include <DataDriver.h>
-#include <boost/python.hpp>
 #include <boost/thread.hpp>
 #include <stdint.h>
 #include <rogue/Logging.h>
@@ -50,7 +49,7 @@ namespace rogue {
                uint32_t bSize_;
 
                //! Timeout for frame transmits
-               uint32_t timeout_;
+               struct timeval timeout_;
 
                //! ssi insertion enable
                bool enSsi_;

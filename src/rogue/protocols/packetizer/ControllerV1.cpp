@@ -28,10 +28,10 @@
 #include <boost/pointer_cast.hpp>
 #include <rogue/GilRelease.h>
 #include <math.h>
+#include <stdlib.h>
 
 namespace rpp = rogue::protocols::packetizer;
 namespace ris = rogue::interfaces::stream;
-namespace bp  = boost::python;
 
 //! Class creation
 rpp::ControllerV1Ptr rpp::ControllerV1::create ( rpp::TransportPtr tran, rpp::ApplicationPtr * app ) {
@@ -164,16 +164,10 @@ void rpp::ControllerV1::applicationRx ( ris::FramePtr frame, uint8_t tDest ) {
    uint8_t  tId;
    struct timeval startTime;
    struct timeval currTime;
-   struct timeval sumTime;
    struct timeval endTime;
 
-   if ( timeout_ > 0 ) {
-      gettimeofday(&startTime,NULL);
-      sumTime.tv_sec = (timeout_ / 1000000);
-      sumTime.tv_usec = (timeout_ % 1000000);
-      timeradd(&startTime,&sumTime,&endTime);
-   }
-   else gettimeofday(&endTime,NULL);
+   gettimeofday(&startTime,NULL);
+   timeradd(&startTime,&timeout_,&endTime);
 
    if ( frame->isEmpty() ) 
       log_->warning("Empty frame received at application");
@@ -187,11 +181,9 @@ void rpp::ControllerV1::applicationRx ( ris::FramePtr frame, uint8_t tDest ) {
    // Wait while queue is busy
    while ( tranQueue_.busy() ) {
       usleep(10);
-      if ( timeout_ > 0 ) {
-         gettimeofday(&currTime,NULL);
-         if ( timercmp(&currTime,&endTime,>))
-            throw(rogue::GeneralError::timeout("packetizer::ControllerV1::applicationRx",timeout_));
-      }
+      gettimeofday(&currTime,NULL);
+      if ( timercmp(&currTime,&endTime,>))
+         throw(rogue::GeneralError::timeout("packetizer::ControllerV1::applicationRx",timeout_));
    }
 
    fUser = frame->getFlags() & 0xFF;

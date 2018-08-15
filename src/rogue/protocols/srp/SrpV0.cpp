@@ -35,10 +35,14 @@
 #include <rogue/Logging.h>
 #include <rogue/GilRelease.h>
 
-namespace bp = boost::python;
 namespace rps = rogue::protocols::srp;
 namespace rim = rogue::interfaces::memory;
 namespace ris = rogue::interfaces::stream;
+
+#ifndef NO_PYTHON
+#include <boost/python.hpp>
+namespace bp  = boost::python;
+#endif
 
 //! Class creation
 rps::SrpV0Ptr rps::SrpV0::create () {
@@ -48,9 +52,10 @@ rps::SrpV0Ptr rps::SrpV0::create () {
 
 //! Setup class in python
 void rps::SrpV0::setup_python() {
+#ifndef NO_PYTHON
 
    bp::class_<rps::SrpV0, rps::SrpV0Ptr, bp::bases<ris::Master,ris::Slave,rim::Slave>, boost::noncopyable >("SrpV0",bp::init<>());
-
+#endif
 }
 
 //! Creator with version constant
@@ -162,7 +167,7 @@ void rps::SrpV0::acceptFrame ( ris::FramePtr frame ) {
    bool     doWrite;
    uint32_t fSize;
 
-   rogue::GilRelease noGil();
+   rogue::GilRelease noGil;
    ris::FrameLockPtr fLock = frame->lock();
 
    // Check frame size
@@ -187,7 +192,6 @@ void rps::SrpV0::acceptFrame ( ris::FramePtr frame ) {
      log_->warning("Invalid ID frame for id=%i",id);
      return; // Bad id or post, drop frame
    }
-   delTransaction(id);
 
    // Setup transaction iterator
    rim::TransactionLockPtr lock = tran->lock();
@@ -218,8 +222,8 @@ void rps::SrpV0::acceptFrame ( ris::FramePtr frame ) {
    fIter = frame->endRead()-TailLen;
    ris::fromFrame(fIter,TailLen,tail);
    if ( tail[0] != 0 ) {
-      if ( tail[0] & 0x20000 ) tran->done(rim::AxiTimeout);
-      else if ( tail[0] & 0x10000 ) tran->done(rim::AxiFail);
+      if ( tail[0] & 0x20000 ) tran->done(rim::BusTimeout);
+      else if ( tail[0] & 0x10000 ) tran->done(rim::BusFail);
       else tran->done(tail[0]);
       log_->warning("Error detected for ID id=%i, tail=0x%0.8x",id,tail[0]);
       return;

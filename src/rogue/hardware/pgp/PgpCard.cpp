@@ -31,10 +31,15 @@
 #include <rogue/GeneralError.h>
 #include <boost/make_shared.hpp>
 #include <rogue/GilRelease.h>
+#include <stdlib.h>
 
 namespace rhp = rogue::hardware::pgp;
 namespace ris = rogue::interfaces::stream;
+
+#ifndef NO_PYTHON
+#include <boost/python.hpp>
 namespace bp  = boost::python;
+#endif
 
 //! Class creation
 rhp::PgpCardPtr rhp::PgpCard::create (std::string path, uint32_t lane, uint32_t vc) {
@@ -48,8 +53,9 @@ rhp::PgpCard::PgpCard ( std::string path, uint32_t lane, uint32_t vc ) {
 
    lane_       = lane;
    vc_         = vc;
-   timeout_    = 10000000;
    zeroCopyEn_ = true;
+
+   rogue::defaultTimeout(timeout_);
 
    rogue::GilRelease noGil;
 
@@ -86,7 +92,11 @@ rhp::PgpCard::~PgpCard() {
 
 //! Set timeout for frame transmits in microseconds
 void rhp::PgpCard::setTimeout(uint32_t timeout) {
-   timeout_ = timeout;
+   if (timeout != 0) {
+      div_t divResult = div(timeout,1000000);
+      timeout_.tv_sec  = divResult.quot;
+      timeout_.tv_usec = divResult.rem;
+   }
 }
 
 //! Enable / disable zero copy
@@ -188,11 +198,10 @@ ris::FramePtr rhp::PgpCard::acceptReq ( uint32_t size, bool zeroCopyEn) {
             FD_SET(fd_,&fds);
 
             // Setup select timeout
-            tout.tv_sec=(timeout_>0)?(timeout_ / 1000000):0;
-            tout.tv_usec=(timeout_>0)?(timeout_ % 1000000):10000;
+            tout = timeout_;
 
             if ( select(fd_+1,NULL,&fds,NULL,&tout) <= 0 ) {
-               if ( timeout_ > 0 ) throw(rogue::GeneralError::timeout("PgpCard::acceptReq",timeout_));
+               throw(rogue::GeneralError::timeout("PgpCard::acceptReq",timeout_));
                res = 0;
             }
             else {
@@ -265,11 +274,10 @@ void rhp::PgpCard::acceptFrame ( ris::FramePtr frame ) {
             FD_SET(fd_,&fds);
 
             // Setup select timeout
-            tout.tv_sec=(timeout_>0)?(timeout_ / 1000000):0;
-            tout.tv_usec=(timeout_>0)?(timeout_ % 1000000):10000;
+            tout = timeout_;
 
             if ( select(fd_+1,NULL,&fds,NULL,&tout) <= 0 ) {
-               if ( timeout_ > 0) throw(rogue::GeneralError("PgpCard::acceptFrame","PGP Write Call Failed. Buffer Not Available!!!!"));
+               throw(rogue::GeneralError("PgpCard::acceptFrame","PGP Write Call Failed. Buffer Not Available!!!!"));
                res = 0;
             }
             else {
@@ -379,6 +387,7 @@ void rhp::PgpCard::runThread() {
 }
 
 void rhp::PgpCard::setup_python () {
+#ifndef NO_PYTHON
 
    bp::class_<rhp::PgpCard, rhp::PgpCardPtr, bp::bases<ris::Master,ris::Slave>, boost::noncopyable >("PgpCard",bp::init<std::string,uint32_t,uint32_t>())
       .def("getInfo",        &rhp::PgpCard::getInfo)
@@ -396,6 +405,6 @@ void rhp::PgpCard::setup_python () {
 
    bp::implicitly_convertible<rhp::PgpCardPtr, ris::MasterPtr>();
    bp::implicitly_convertible<rhp::PgpCardPtr, ris::SlavePtr>();
-
+#endif
 }
 

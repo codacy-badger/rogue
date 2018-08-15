@@ -22,8 +22,11 @@
 #include <boost/enable_shared_from_this.hpp>
 #include <stdint.h>
 #include <vector>
-#include <boost/python.hpp>
 #include <boost/thread.hpp>
+
+#ifndef NO_PYTHON
+#include <boost/python.hpp>
+#endif
 
 namespace rogue {
    namespace interfaces {
@@ -54,14 +57,19 @@ namespace rogue {
 
             protected:
 
+               //! Transaction timeout 
+               struct timeval timeout_;
+
                //! Transaction start time
                struct timeval endTime_;
 
                //! Transaction start time
                struct timeval startTime_;
 
+#ifndef NO_PYTHON
                //! Transaction python buffer
                Py_buffer pyBuf_;
+#endif
 
                //! Python buffer is valid
                bool pyValid_;
@@ -93,13 +101,13 @@ namespace rogue {
             public:
 
                //! Create a transaction container
-               static boost::shared_ptr<rogue::interfaces::memory::Transaction> create ();
+               static boost::shared_ptr<rogue::interfaces::memory::Transaction> create (struct timeval timeout);
 
                //! Setup class in python
                static void setup_python();
 
                //! Constructor
-               Transaction();
+               Transaction(struct timeval timeout);
 
                //! Destructor
                ~Transaction();
@@ -128,17 +136,23 @@ namespace rogue {
                //! Wait for the transaction to complete
                uint32_t wait();
 
+               //! Refresh timer
+               void refreshTimer(boost::shared_ptr<rogue::interfaces::memory::Transaction> reference);
+
                //! start iterator, caller must lock around access
                rogue::interfaces::memory::Transaction::iterator begin();
 
                //! end iterator, caller must lock around access
                rogue::interfaces::memory::Transaction::iterator end();
 
+#ifndef NO_PYTHON
+
                //! Get transaction data from python
                void getData ( boost::python::object p, uint32_t offset );
 
                //! Set transaction data from python
                void setData ( boost::python::object p, uint32_t offset );
+#endif
          };
 
          // Convienence

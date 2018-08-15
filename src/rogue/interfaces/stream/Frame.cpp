@@ -24,10 +24,13 @@
 #include <rogue/interfaces/stream/Buffer.h>
 #include <rogue/GeneralError.h>
 #include <boost/make_shared.hpp>
-#include <boost/python.hpp>
 
-namespace ris = rogue::interfaces::stream;
+namespace ris  = rogue::interfaces::stream;
+
+#ifndef NO_PYTHON
+#include <boost/python.hpp>
 namespace bp  = boost::python;
+#endif
 
 //! Create an empty frame
 ris::FramePtr ris::Frame::create() {
@@ -58,7 +61,7 @@ ris::Frame::BufferIterator ris::Frame::appendBuffer(ris::BufferPtr buff) {
 
    buff->setFrame(shared_from_this());
    buffers_.push_back(buff);
-   updateSizes();
+   sizeDirty_ = true;
    return(buffers_.begin()+oSize);
 }
 
@@ -70,9 +73,8 @@ ris::Frame::BufferIterator ris::Frame::appendFrame(ris::FramePtr frame) {
       (*it)->setFrame(shared_from_this());
       buffers_.push_back(*it);
    }
-   frame->buffers_.clear();
-   frame->updateSizes();
-   updateSizes();
+   frame->clear();
+   sizeDirty_ = true;
    return(buffers_.begin()+oSize);
 }
 
@@ -102,8 +104,8 @@ bool ris::Frame::isEmpty() {
 void ris::Frame::updateSizes() {
    ris::Frame::BufferIterator it;
 
-   size_      = 0;
-   payload_   = 0;
+   size_    = 0;
+   payload_ = 0;
 
    for (it = buffers_.begin(); it != buffers_.end(); ++it) {
       payload_ += (*it)->getPayload();
@@ -199,7 +201,7 @@ void ris::Frame::minPayload(uint32_t size) {
    if ( size > getPayload() ) setPayload(size);
 }
 
-//! Adjust payload size, TODO: Reduce iterations
+//! Adjust payload size
 void ris::Frame::adjustPayload(int32_t value) {
    uint32_t size = getPayload();
 
@@ -213,22 +215,32 @@ void ris::Frame::adjustPayload(int32_t value) {
 void ris::Frame::setPayloadFull() {
    ris::Frame::BufferIterator it;
 
-   for (it = buffers_.begin(); it != buffers_.end(); ++it) 
+   size_    = 0;
+   payload_ = 0;
+
+   for (it = buffers_.begin(); it != buffers_.end(); ++it) {
       (*it)->setPayloadFull();
 
-   // Refresh
-   updateSizes();
+      payload_ += (*it)->getPayload();
+      size_    += (*it)->getSize();
+   }
+   sizeDirty_ = false;
 }
 
 //! Set the buffer as empty (minus header reservation)
 void ris::Frame::setPayloadEmpty() {
    ris::Frame::BufferIterator it;
 
-   for (it = buffers_.begin(); it != buffers_.end(); ++it) 
+   size_      = 0;
+   payload_   = 0;
+
+   for (it = buffers_.begin(); it != buffers_.end(); ++it) {
       (*it)->setPayloadEmpty();
 
-   // Refresh
-   updateSizes();
+      payload_ += (*it)->getPayload();
+      size_    += (*it)->getSize();
+   }
+   sizeDirty_ = false;
 }
 
 //! Get flags
@@ -270,6 +282,8 @@ ris::Frame::iterator ris::Frame::beginWrite() {
 ris::Frame::iterator ris::Frame::endWrite() {
    return ris::Frame::iterator(shared_from_this(),true,true);
 }
+
+#ifndef NO_PYTHON
 
 //! Read up to count bytes from frame, starting from offset. Python version.
 void ris::Frame::readPy ( boost::python::object p, uint32_t offset ) {
@@ -320,7 +334,10 @@ void ris::Frame::writePy ( boost::python::object p, uint32_t offset ) {
    PyBuffer_Release(&pyBuf);
 }
 
+#endif
+
 void ris::Frame::setup_python() {
+#ifndef NO_PYTHON
 
    bp::class_<ris::Frame, ris::FramePtr, boost::noncopyable>("Frame",bp::no_init)
       .def("lock",         &ris::Frame::lock)
@@ -334,5 +351,6 @@ void ris::Frame::setup_python() {
       .def("setFlags",     &ris::Frame::setFlags)
       .def("getFlags",     &ris::Frame::getFlags)
    ;
+#endif
 }
 

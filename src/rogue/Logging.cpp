@@ -18,16 +18,25 @@
  * ----------------------------------------------------------------------------
 **/
 #include <rogue/Logging.h>
-#include <sys/syscall.h>
 #include <boost/make_shared.hpp>
+#include <stdarg.h>
+
+#if defined(__linux__)
+#include <sys/syscall.h>
+#elif defined(__APPLE__) && defined(__MACH__)
+#include <pthread.h>
+#endif
+
+#ifndef NO_PYTHON
+#include <boost/python.hpp>
+namespace bp = boost::python;
+#endif
 
 const uint32_t rogue::Logging::Critical;
 const uint32_t rogue::Logging::Error;
 const uint32_t rogue::Logging::Warning;
 const uint32_t rogue::Logging::Info;
 const uint32_t rogue::Logging::Debug;
-
-namespace bp = boost::python;
 
 // Logging level
 uint32_t rogue::Logging::gblLevel_ = rogue::Logging::Error;
@@ -84,9 +93,11 @@ void rogue::Logging::setFilter(std::string name, uint32_t level) {
 void rogue::Logging::intLog(uint32_t level, const char * fmt, va_list args) {
    if ( level < level_ ) return;
 
+   struct timeval tme;
    char buffer[1000];
    vsnprintf(buffer,1000,fmt,args);
-   printf("%s: %s\n",name_.c_str(),buffer);
+   gettimeofday(&tme,NULL);
+   printf("%li.%li:%s: %s\n",tme.tv_sec,tme.tv_usec,name_.c_str(),buffer);
 }
 
 void rogue::Logging::log(uint32_t level, const char * fmt, ...) {
@@ -131,7 +142,24 @@ void rogue::Logging::debug(const char * fmt, ...) {
    va_end(arg);
 }
 
+void rogue::Logging::logThreadId(uint32_t level) {
+   uint32_t tid;
+
+#if defined(__linux__)
+   tid = syscall(SYS_gettid);
+#elif defined(__APPLE__) && defined(__MACH__)
+   uint64_t tid64;
+   pthread_threadid_np(NULL,&tid64);
+   tid = (uint32_t)tid64;
+#else
+   tid = 0;
+#endif
+
+   this->log(level, "PID=%i, TID=%i", getpid(), tid);
+}
+
 void rogue::Logging::setup_python() {
+#ifndef NO_PYTHON
    bp::class_<rogue::Logging, rogue::LoggingPtr, boost::noncopyable>("Logging",bp::no_init)
       .def("setLevel", &rogue::Logging::setLevel)
       .staticmethod("setLevel")
@@ -143,6 +171,7 @@ void rogue::Logging::setup_python() {
       .def_readonly("Info",     &rogue::Logging::Info)
       .def_readonly("Debug",    &rogue::Logging::Debug)
    ;
+#endif
 }
 
 

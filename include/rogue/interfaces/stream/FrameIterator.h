@@ -21,7 +21,6 @@
 #define __ROGUE_INTERFACES_STREAM_FRAME_ITERATOR_H__
 #include <stdint.h>
 #include <vector>
-#include <boost/python.hpp>
 
 namespace rogue {
    namespace interfaces {
@@ -67,18 +66,24 @@ namespace rogue {
                //! Creator
                FrameIterator();
 
-               //! Setup class in python
-               static void setup_python();
-
                //! Copy assignment
                const rogue::interfaces::stream::FrameIterator operator =(
                      const rogue::interfaces::stream::FrameIterator &rhs);
+
+               //! Get iterator to end of buffer or end of frame, whichever is lower
+               rogue::interfaces::stream::FrameIterator endBuffer();
+
+               //! Get remaining bytes in current buffer
+               uint32_t remBuffer();
 
                //! De-reference
                uint8_t & operator *() const;
 
                //! Pointer
                uint8_t * operator ->() const;
+
+               //! Pointer
+               uint8_t * ptr() const;
 
                //! De-reference by index
                uint8_t operator [](const uint32_t &offset) const;

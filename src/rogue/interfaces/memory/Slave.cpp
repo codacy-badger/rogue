@@ -26,8 +26,12 @@
 #include <rogue/GilRelease.h>
 #include <rogue/ScopedGil.h>
 
+#ifndef NO_PYTHON
+#include <boost/python.hpp>
+namespace bp  = boost::python;
+#endif
+
 namespace rim = rogue::interfaces::memory;
-namespace bp = boost::python;
 
 // Init class counter
 uint32_t rim::Slave::classIdx_ = 0;
@@ -60,7 +64,7 @@ rim::Slave::~Slave() { }
 void rim::Slave::addTransaction(rim::TransactionPtr tran) {
    rogue::GilRelease noGil;
    boost::lock_guard<boost::mutex> lock(slaveMtx_);
-   tranMap_[tran->id()] = tran; // Weak pointer copy
+   tranMap_[tran->id()] = tran;
 }
 
 //! Get transaction with index, called by sub classes
@@ -71,34 +75,26 @@ rim::TransactionPtr rim::Slave::getTransaction(uint32_t index) {
    rogue::GilRelease noGil;
    boost::lock_guard<boost::mutex> lock(slaveMtx_);
 
-   it = tranMap_.find(index);
+   if ( (it = tranMap_.find(index)) != tranMap_.end() ) {
+      ret = it->second;
 
-   if ( ( it = tranMap_.find(index)) != tranMap_.end() ) {
+      // Remove from list
+      tranMap_.erase(it);
 
-      // Expired pointer
-      if ( ! (ret = it->second.lock()) ) tranMap_.erase(it);
-   } 
-   return ret;
-}
-
-//! Remove master from the list
-void rim::Slave::delTransaction(uint32_t index) {
-   TransactionMap::iterator it;
-
-   rogue::GilRelease noGil;
-   boost::lock_guard<boost::mutex> lock(slaveMtx_);
-
-   it = tranMap_.begin();
-
-   while ( it != tranMap_.end() ) {
-
-      // Weak pointer or matching index
-      if ( it->second.expired() || it->first == index ) {
-         tranMap_.erase(it); // Iterator no longer valid
-         it = tranMap_.begin();
+      // Cleanup the list, update timers
+      it = tranMap_.begin();
+      while ( it != tranMap_.end() ) {
+         if ( it->second->expired() ) {
+            tranMap_.erase(it); // Iterator no longer valid
+            it = tranMap_.begin();
+         }
+         else {
+            it->second->refreshTimer(ret);
+            ++it;
+         }
       }
-      else ++it;
    }
+   return ret;
 }
 
 //! Get min size from slave
@@ -142,16 +138,19 @@ void rim::Slave::doTransaction(rim::TransactionPtr transaction) {
 }
 
 void rim::Slave::setup_python() {
+#ifndef NO_PYTHON
    bp::class_<rim::SlaveWrap, rim::SlaveWrapPtr, boost::noncopyable>("Slave",bp::init<uint32_t,uint32_t>())
       .def("_addTransaction", &rim::Slave::addTransaction)
       .def("_getTransaction", &rim::Slave::getTransaction)
-      .def("_delTransaction", &rim::Slave::delTransaction)
       .def("_doMinAccess",    &rim::Slave::doMinAccess,   &rim::SlaveWrap::defDoMinAccess)
       .def("_doMaxAccess",    &rim::Slave::doMaxAccess,   &rim::SlaveWrap::defDoMaxAccess)
       .def("_doAddress",      &rim::Slave::doAddress,     &rim::SlaveWrap::defDoAddress)
       .def("_doTransaction",  &rim::Slave::doTransaction, &rim::SlaveWrap::defDoTransaction)
    ;
+#endif
 }
+
+#ifndef NO_PYTHON
 
 //! Constructor
 rim::SlaveWrap::SlaveWrap(uint32_t min, uint32_t max) : rim::Slave(min,max) {}
@@ -240,4 +239,6 @@ void rim::SlaveWrap::doTransaction(rim::TransactionPtr transaction) {
 void rim::SlaveWrap::defDoTransaction(rim::TransactionPtr transaction) {
    rim::Slave::doTransaction(transaction);
 }
+
+#endif
 

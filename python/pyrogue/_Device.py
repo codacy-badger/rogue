@@ -92,6 +92,7 @@ class DeviceError(Exception):
     """ Exception for device manipulation errors."""
     pass
 
+
 class Device(pr.Node,rim.Hub):
     """Device class holder. TODO: Update comments"""
 
@@ -102,7 +103,6 @@ class Device(pr.Node,rim.Hub):
                  offset=0,
                  size=0,
                  hidden=False,
-                 variables=None,
                  blockSize=None,
                  expand=True,
                  enabled=True,
@@ -134,33 +134,10 @@ class Device(pr.Node,rim.Hub):
         self._log.info("Making device {:s}".format(name))
 
         # Convenience methods
-        self.addVariable = ft.partial(self.addNode, pr.Variable) # Legacy
-        self.addVariables = ft.partial(self.addNodes, pr.Variable) # Legacy
-
-        self.addCommand = ft.partial(self.addNode, pr.Command) # Legacy
-        self.addCommands = ft.partial(self.addNodes, pr.Command) # Legacy
         self.addRemoteCommands = ft.partial(self.addNodes, pr.RemoteCommand)
 
         # Variable interface to enable flag
         self.add(EnableVariable(enabled=enabled, deps=enableDeps))
-
-        if variables is not None and isinstance(variables, collections.Iterable):
-            if all(isinstance(v, pr.BaseVariable) for v in variables):
-                # add the list of Variable objects
-                self.add(variables)
-            elif all(isinstance(v, dict) for v in variables):
-                # create Variable objects from a dict list
-                self.add(pr.Variable(**v) for v in variables)
-
-        cmds = sorted((d for d in (getattr(self, c) for c in dir(self)) if hasattr(d, 'PyrogueCommandArgs')),
-                      key=lambda x: x.PyrogueCommandOrder)
-        for cmd in cmds:
-            args = getattr(cmd, 'PyrogueCommandArgs')
-            if 'name' not in args:
-                args['name'] = cmd.__name__
-
-            print("Adding command {} using depcreated decorator. Please use __init__ decorators instead!".format(args['name']))
-            self.add(pr.LocalCommand(function=cmd, **args))
 
     @Pyro4.expose
     @property
@@ -252,12 +229,14 @@ class Device(pr.Node,rim.Hub):
 
         # Process local blocks.
         if variable is not None:
-            variable._block.startTransaction(rim.Write, check=checkEach)
+            for b in self._getBlocks(variable):
+                if (force or block.stale):                
+                    b.startTransaction(rim.Write, check=checkEach)
+
         else:
             for block in self._blocks:
-                if force or block.stale:
-                    if block.bulkEn:
-                        block.startTransaction(rim.Write, check=checkEach)
+                if (force or block.stale) and block.bulkEn:
+                    block.startTransaction(rim.Write, check=checkEach)
 
             if recurse:
                 for key,value in self.devices.items():
@@ -271,7 +250,9 @@ class Device(pr.Node,rim.Hub):
 
         # Process local blocks.
         if variable is not None:
-            variable._block.startTransaction(rim.Verify, checkEach)
+            for b in self._getBlocks(variable):
+                b.startTransaction(rim.Verify, checkEach)
+
         else:
             for block in self._blocks:
                 if block.bulkEn:
@@ -290,7 +271,9 @@ class Device(pr.Node,rim.Hub):
 
         # Process local blocks. 
         if variable is not None:
-            variable._block.startTransaction(rim.Read, checkEach)
+            for b in self._getBlocks(variable):
+                b.startTransaction(rim.Read, checkEach)
+
         else:
             for block in self._blocks:
                 if block.bulkEn:
@@ -308,7 +291,9 @@ class Device(pr.Node,rim.Hub):
 
             # Process local blocks
             if variable is not None:
-                variable._block._checkTransaction()
+                for b in self._getBlocks(variable):
+                    b._checkTransaction()
+
             else:
                 for block in self._blocks:
                     block._checkTransaction()
@@ -324,7 +309,7 @@ class Device(pr.Node,rim.Hub):
         self.checkBlocks(recurse=recurse, variable=variable)
 
     def _rawTxnChunker(self, offset, data, base=pr.UInt, stride=4, wordBitSize=32, txnType=rim.Write, numWords=1):
-        if offset + (numWords * stride) >= self._size:
+        if offset + (numWords * stride) > self._size:
             raise pr.MemoryError(name=self.name, address=offset|self.address,
                                  msg='Raw transaction outside of device size')
 
@@ -332,7 +317,7 @@ class Device(pr.Node,rim.Hub):
             raise pr.MemoryError(name=self.name, address=offset|self.address,
                                  msg='Called raw memory access with wordBitSize > stride')
 
-        if txnType == rim.Write:
+        if txnType == rim.Write or txnType == rim.Post:
             if isinstance(data, bytearray):
                 ldata = data
             elif isinstance(data, collections.Iterable):
@@ -355,14 +340,19 @@ class Device(pr.Node,rim.Hub):
 
             return ldata
 
-    def _rawWrite(self, offset, data, base=pr.UInt, stride=4, wordBitSize=32, tryCount=1):
+    def _rawWrite(self, offset, data, base=pr.UInt, stride=4, wordBitSize=32, tryCount=1, posted=False):
         with self._memLock:
+
+            if posted: txn = rim.Post
+            else: txn = rim.Write
+
             for _ in range(tryCount):
                 self._setError(0)
-                self._rawTxnChunker(offset, data, base, stride, wordBitSize, txnType=rim.Write)
+                self._rawTxnChunker(offset, data, base, stride, wordBitSize, txn)
                 self._waitTransaction(0)
 
                 if self._getError() == 0: return
+                elif posted: break
                 self._log.warning("Retrying raw write transaction")
 
             # If we get here an error has occured
@@ -385,6 +375,26 @@ class Device(pr.Node,rim.Hub):
             # If we get here an error has occured
             raise pr.MemoryError (name=self.name, address=offset|self.address, error=self._getError())
 
+
+    def _getBlocks(self, variables):
+        """
+        Get a list of unique blocks from a list of Variables. 
+        Variables must belong to this device!
+        """
+        if isinstance(variables, pr.BaseVariable):
+            variables = [variables]
+
+        blocks = []
+        for v in variables:
+            if v.parent is not self:
+                raise DeviceError(
+                    f'Variable {v.path} passed to {self.path}._getBlocks() is not a member of {self.path}')
+            else:
+                if v._block not in blocks:
+                    blocks.append(v._block)
+                
+        return blocks
+
     def _buildBlocks(self):
         remVars = []
 
@@ -403,41 +413,37 @@ class Device(pr.Node,rim.Hub):
             if isinstance(n,pr.LocalVariable):
                 self._blocks.append(n._block)
 
-            # Align to min access, create list softed by offset 
+            # Align to min access, create list sorted by offset 
             elif isinstance(n,pr.RemoteVariable) and n.offset is not None:
                 n._shiftOffsetDown(n.offset % blkSize, blkSize)
                 remVars += [n]
 
-        # Loop until no overlaps found
-        done = False
-        while done == False:
-            done = True
+        # Sort var list by offset, size
+        remVars.sort(key=lambda x: (x.offset, x.varBytes))
+        blocks = []
+        blk = None
 
-            # Sort byte offset and size
-            remVars.sort(key=lambda x: (x.offset, x.varBytes))
-
-            # Look for overlaps and adjust offset
-            for i in range(1,len(remVars)):
-
-                # Variable overlaps the range of the previous variable
-                if (remVars[i].offset != remVars[i-1].offset) and \
-                   (remVars[i].offset <= (remVars[i-1].offset + remVars[i-1].varBytes - 1)):
-                    self._log.info("Overlap detected cur offset={} prev offset={} prev bytes={}".format(
-                        remVars[i].offset,remVars[i-1].offset,remVars[i-1].varBytes))
-                    remVars[i]._shiftOffsetDown(remVars[i].offset - remVars[i-1].offset, blkSize)
-                    done = False
-                    break
-
-        # Add variables
+        # Go through sorted variable list, look for overlaps, group into blocks
         for n in remVars:
+            if blk is not None and ( (blk['offset'] + blk['size']) > n.offset):
+                self._log.info("Overlap detected var offset={} block offset={} block bytes={}".format(n.offset,blk['offset'],blk['size']))
+                n._shiftOffsetDown(n.offset - blk['offset'], blkSize)
+                blk['vars'].append(n)
+
+                if n.varBytes > blk['size']: blk['size'] = n.varBytes
+
+            else:
+                blk = {'offset':n.offset, 'size':n.varBytes, 'vars':[n]}
+                blocks.append(blk)
+
+        # Create blocks
+        for b in blocks:
+            self._blocks.append(pr.RemoteBlock(offset=b['offset'], size=b['size'], variables=b['vars']))
+            self._log.debug("Adding new block at offset {:#02x}, size {}".format(b['offset'], b['size']))
 
             # Adjust device size
-            if (n.offset + n.varBytes) > self._size:
-                self._size = (n.offset + n.varBytes)
-
-            if not any(block._addVariable(n) for block in self._blocks):
-                self._log.debug("Adding new block {} at offset {:#02x}".format(n.name,n.offset))
-                self._blocks.append(pr.RemoteBlock(variable=n))
+            if (b['offset'] + b['size']) > self._size:
+                self._size = (b['offset'] + b['size'])
 
     def _rootAttached(self, parent, root):
         pr.Node._rootAttached(self, parent, root)
@@ -469,7 +475,7 @@ class Device(pr.Node,rim.Hub):
         for block in self._blocks:
             block.timeout = timeout
 
-        rim.Master._setTimeout(self, timeout*1000000)
+        rim.Master._setTimeout(self, int(timeout*1000000))
 
         for key,value in self._nodes.items():
             if isinstance(value,Device):

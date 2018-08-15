@@ -38,10 +38,6 @@ ris::BufferPtr ris::Buffer::create ( ris::PoolPtr source, void * data, uint32_t 
    return(buff);
 }
 
-void ris::Buffer::setup_python() {
-   // Nothing to do
-}
-
 //! Create a buffer.
 /*
  * Pass owner, raw data buffer, and meta data
@@ -100,7 +96,7 @@ void ris::Buffer::adjustHeader(int32_t value) {
    if ( payload_ < headRoom_ ) payload_ = headRoom_;
 
    ris::FramePtr tmpPtr;
-   if ( tmpPtr = frame_.lock() ) tmpPtr->setSizeDirty(); 
+   if ( (tmpPtr = frame_.lock()) ) tmpPtr->setSizeDirty(); 
 }
 
 //! Clear the header reservation
@@ -108,7 +104,7 @@ void ris::Buffer::zeroHeader() {
    headRoom_ = 0;
 
    ris::FramePtr tmpPtr;
-   if ( tmpPtr = frame_.lock() ) tmpPtr->setSizeDirty(); 
+   if ( (tmpPtr = frame_.lock()) ) tmpPtr->setSizeDirty(); 
 }
 
 //! Adjust tail by passed value
@@ -127,7 +123,7 @@ void ris::Buffer::adjustTail(int32_t value) {
    tailRoom_ += value;
 
    ris::FramePtr tmpPtr;
-   if ( tmpPtr = frame_.lock() ) tmpPtr->setSizeDirty(); 
+   if ( (tmpPtr = frame_.lock()) ) tmpPtr->setSizeDirty(); 
 }
 
 //! Clear the tail reservation
@@ -135,7 +131,7 @@ void ris::Buffer::zeroTail() {
    tailRoom_ = 0;
 
    ris::FramePtr tmpPtr;
-   if ( tmpPtr = frame_.lock() ) tmpPtr->setSizeDirty(); 
+   if ( (tmpPtr = frame_.lock()) ) tmpPtr->setSizeDirty(); 
 }
 
 /* 
@@ -208,7 +204,7 @@ void ris::Buffer::setPayload(uint32_t size) {
    payload_ = size + headRoom_;
 
    ris::FramePtr tmpPtr;
-   if ( tmpPtr = frame_.lock() ) tmpPtr->setSizeDirty(); 
+   if ( (tmpPtr = frame_.lock()) ) tmpPtr->setSizeDirty(); 
 }
 
 /* 
@@ -231,7 +227,7 @@ void ris::Buffer::setPayloadFull() {
    payload_ = rawSize_ - tailRoom_;
 
    ris::FramePtr tmpPtr;
-   if ( tmpPtr = frame_.lock() ) tmpPtr->setSizeDirty(); 
+   if ( (tmpPtr = frame_.lock()) ) tmpPtr->setSizeDirty(); 
 }
 
 //! Set the buffer as empty (minus header reservation)
@@ -239,6 +235,6 @@ void ris::Buffer::setPayloadEmpty() {
    payload_ = headRoom_;
 
    ris::FramePtr tmpPtr;
-   if ( tmpPtr = frame_.lock() ) tmpPtr->setSizeDirty(); 
+   if ( (tmpPtr = frame_.lock()) ) tmpPtr->setSizeDirty(); 
 }
 

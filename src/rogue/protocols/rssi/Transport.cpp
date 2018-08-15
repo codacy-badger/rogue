@@ -26,11 +26,14 @@
 #include <boost/make_shared.hpp>
 #include <rogue/GilRelease.h>
 #include <rogue/Logging.h>
-#include <sys/syscall.h>
 
 namespace rpr = rogue::protocols::rssi;
 namespace ris = rogue::interfaces::stream;
+
+#ifndef NO_PYTHON
+#include <boost/python.hpp>
 namespace bp  = boost::python;
+#endif
 
 //! Class creation
 rpr::TransportPtr rpr::Transport::create () {
@@ -39,11 +42,13 @@ rpr::TransportPtr rpr::Transport::create () {
 }
 
 void rpr::Transport::setup_python() {
+#ifndef NO_PYTHON
 
    bp::class_<rpr::Transport, rpr::TransportPtr, bp::bases<ris::Master,ris::Slave>, boost::noncopyable >("Transport",bp::init<>());
 
    bp::implicitly_convertible<rpr::TransportPtr, ris::MasterPtr>();
    bp::implicitly_convertible<rpr::TransportPtr, ris::SlavePtr>();
+#endif
 }
 
 //! Creator
@@ -70,7 +75,7 @@ void rpr::Transport::acceptFrame ( ris::FramePtr frame ) {
 //! Thread background
 void rpr::Transport::runThread() {
    Logging log("rssi.Transport");
-   log.info("PID=%i, TID=%li",getpid(),syscall(SYS_gettid));
+   log.logThreadId(rogue::Logging::Info);
 
    try {
       while(1) {

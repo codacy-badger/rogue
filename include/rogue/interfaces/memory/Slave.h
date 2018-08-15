@@ -22,7 +22,10 @@
 #include <stdint.h>
 #include <vector>
 #include <rogue/interfaces/memory/Master.h>
+
+#ifndef NO_PYTHON
 #include <boost/python.hpp>
+#endif
 
 namespace rogue {
    namespace interfaces {
@@ -44,7 +47,7 @@ namespace rogue {
                uint32_t id_;
 
                //! Alias for map
-               typedef std::map<uint32_t, boost::weak_ptr<rogue::interfaces::memory::Transaction> > TransactionMap;
+               typedef std::map<uint32_t, boost::shared_ptr<rogue::interfaces::memory::Transaction> > TransactionMap;
 
                //! Transaction map
                TransactionMap tranMap_;
@@ -78,9 +81,6 @@ namespace rogue {
                //! Get Transaction with index
                boost::shared_ptr<rogue::interfaces::memory::Transaction> getTransaction(uint32_t index);
 
-               //! Remove transaction from the list, also cleanup stale transactions
-               void delTransaction(uint32_t index);
-
                //! Get min size from slave
                uint32_t min();
 
@@ -105,6 +105,11 @@ namespace rogue {
                //! Post a transaction. Master will call this method with the access attributes.
                virtual void doTransaction(boost::shared_ptr<rogue::interfaces::memory::Transaction> transaction);
          };
+
+         // Convienence
+         typedef boost::shared_ptr<rogue::interfaces::memory::Slave> SlavePtr;
+
+#ifndef NO_PYTHON
 
          //! Memory slave class, wrapper to enable pyton overload of virtual methods
          class SlaveWrap : 
@@ -142,9 +147,8 @@ namespace rogue {
 
          };
 
-         // Convienence
-         typedef boost::shared_ptr<rogue::interfaces::memory::Slave> SlavePtr;
          typedef boost::shared_ptr<rogue::interfaces::memory::SlaveWrap> SlaveWrapPtr;
+#endif
 
       }
    }
