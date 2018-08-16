@@ -28,6 +28,7 @@ install:
   - mkdir build; cd build
   - cmake .. -DPYTHON_LIBRARY=$PY_PATH/lib/python3.6 -DPYTHON_INCLUDE_DIR=$PY_PATH/include
   - make
+  - cd $TRAVIS_BUILD_DIR
 
 before_script:
   - curl -L https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64 > ./cc-test-reporter
