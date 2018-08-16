@@ -7,8 +7,13 @@ python:
 
 env:
   - PY_PATH=/home/travis/virtualenv/python3.6.3
+  global:
+    - CC_TEST_REPORTER_ID=07d3b2d6e4c0d6862f45a8247121f371f730a4755a149ce0f1c2390a91c89008
 
 before_install:
+  - curl -L https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64 > ./cc-test-reporter
+  - chmod +x ./cc-test-reporter
+  - ./cc-test-reporter before-build
   - export CPLUS_INCLUDE_PATH=$PY_PATH/include/python3.6m
   - export LD_LIBRARY_PATH=$TRAVIS_BUILD_DIR/packages/boost_1_64_0/stage/lib:$PY_PATH/lib:$LD_LIBRARY_PATH
   - export BOOST_ROOT=$TRAVIS_BUILD_DIR/packages/boost_1_64_0
@@ -41,3 +46,4 @@ after_success:
   - export CODACY_PROJECT_TOKEN=0289f074bfd144798e1e640d799db48a
   - coverage xml
   - python-codacy-coverage -r coverage.xml
+  - ./cc-test-reporter after-build --exit-code $TRAVIS_TEST_RESULT
