@@ -7,8 +7,7 @@ python:
 
 env:
   - PY_PATH=/home/travis/virtualenv/python3.6.3
-  global:
-    - CC_TEST_REPORTER_ID=07d3b2d6e4c0d6862f45a8247121f371f730a4755a149ce0f1c2390a91c89008
+  - CC_TEST_REPORTER_ID=07d3b2d6e4c0d6862f45a8247121f371f730a4755a149ce0f1c2390a91c89008
 
 before_install:
   - curl -L https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64 > ./cc-test-reporter
