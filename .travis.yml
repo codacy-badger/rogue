@@ -6,9 +6,7 @@ python:
   - 3.6
 
 env:
-  global:
-    - CC_TEST_REPORTER_ID=07d3b2d6e4c0d6862f45a8247121f371f730a4755a149ce0f1c2390a91c89008
-    - PY_PATH=/home/travis/virtualenv/python3.6.3
+  - PY_PATH=/home/travis/virtualenv/python3.6.3
 
 before_install:
   - export CPLUS_INCLUDE_PATH=$PY_PATH/include/python3.6m
@@ -28,12 +26,8 @@ install:
   - mkdir build; cd build
   - cmake .. -DPYTHON_LIBRARY=$PY_PATH/lib/python3.6 -DPYTHON_INCLUDE_DIR=$PY_PATH/include
   - make
-  - cd $TRAVIS_BUILD_DIR
 
 before_script:
-  - curl -L https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64 > ./cc-test-reporter
-  - chmod +x ./cc-test-reporter
-  - ./cc-test-reporter before-build
   - cd $TRAVIS_BUILD_DIR
   - source setup_rogue.sh
 
@@ -47,4 +41,3 @@ after_success:
   - export CODACY_PROJECT_TOKEN=0289f074bfd144798e1e640d799db48a
   - coverage xml
   - python-codacy-coverage -r coverage.xml
-  - ./cc-test-reporter after-build --exit-code $TRAVIS_TEST_RESULT
